@@ -5,12 +5,18 @@ Licensed under the CC BY-NC-SA 4.0 license
 """
 import os.path
 from PIL import Image
-
+from skimage import exposure, io
 import torch.utils.data as data
+import numpy as np
 
 
 def default_loader(path):
-    return Image.open(path).convert('RGB')
+    # image = Image.open(path).convert('RGB')
+    image = io.imread(path)
+    image = exposure.equalize_adapthist(image, clip_limit=0.1)
+    image = (image * 255).astype(np.uint8)
+    image = Image.fromarray(image)
+    return image
 
 
 def default_filelist_reader(filelist):

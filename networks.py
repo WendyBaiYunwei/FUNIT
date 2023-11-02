@@ -8,9 +8,13 @@ import numpy as np
 import torch
 from torch import nn
 from torch import autograd
+import torch.nn.functional as F
+import torchvision.transforms as transforms
+import torch.distributions as dist
 
 from blocks import LinearBlock, Conv2dBlock, ResBlocks, ActFirstResBlock
 
+import math
 
 def assign_adain_params(adain_params, model):
     # assign the adain_params to the AdaIN layers in model
@@ -148,6 +152,7 @@ class FewShotGen(nn.Module):
                        n_mlp_blks,
                        norm='none',
                        activ='relu')
+        self.erase = GaussianBlurLayer(kernel_size=17, channels=1)
 
     def forward(self, one_image, model_set):
         # reconstruct an image
@@ -263,3 +268,86 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.model(x.view(x.size(0), -1))
+
+# class GaussianBlurLayer(nn.Module):
+#     def __init__(self, kernel_size=3, channels=1):
+#         super(GaussianBlurLayer, self).__init__()
+#         self.kernel_size = kernel_size
+#         self.channels = channels
+        
+#         # Learnable parameters for mean and log variance
+#         self.mean = nn.Parameter(torch.randn(1), requires_grad=True)
+#         self.log_var = nn.Parameter(torch.full((1,), 4.0), requires_grad=True)
+#         self.to_grayscale = transforms.Compose([transforms.Grayscale(num_output_channels=1)])
+
+#     def get_gaussian_kernel(self, kernel_size, mean, log_var, sigma=1.0):
+#         x = torch.arange(-kernel_size // 2 + 1, kernel_size // 2 + 1, dtype=torch.float32).cuda()
+#         std = torch.exp(0.5 * log_var)
+#         kernel = torch.exp(-0.5 * ((x - mean) / (sigma * std))**2)
+#         kernel = kernel / kernel.sum()
+#         return kernel
+
+#     def forward(self, x):
+#         x = self.to_grayscale(x)
+#         print(x.shape)
+        
+#         # Get the Gaussian kernel based on the mean and log variance
+#         gaussian_kernel = self.get_gaussian_kernel(self.kernel_size, self.mean, self.log_var)
+        
+#         # Apply Gaussian blur using the learned kernel
+#         blurred = F.conv2d(x, gaussian_kernel.view(1, 1, -1, 1), padding=(self.kernel_size // 2, self.kernel_size // 2))
+#         print(blurred.shape)
+#         exit()
+
+#         blurred = blurred.repeat(1, 3, 1, 1)
+#         return blurred
+
+class GaussianBlurLayer(nn.Module):
+    def __init__(self, kernel_size=3, channels=1):
+        super(GaussianBlurLayer, self).__init__()
+        self.kernel_size = kernel_size
+        self.channels = channels
+        
+        # Learnable parameters for mean and log variance for each channel
+        # self.mean = nn.Parameter(torch.randn(channels), requires_grad=True)
+        self.variance = nn.Parameter(torch.full((1,), 0.1), requires_grad=True)
+        self.to_grayscale = transforms.Compose([transforms.Grayscale(num_output_channels=1)])
+        # gaussian_dist = dist.Normal(0, 1)
+        # self.weights = gaussian_dist.sample((kernel_size,)).cuda()
+        # self.weights = torch.cat(self.weights.sort())
+        # self.weights += torch.abs(self.weights[0]) + 1.0
+
+    def get_gaussian_kernel(self, kernel_size):
+        # self.weights *= self.variance[0].item()
+        # weights = self.weights
+
+        # gaussian_dist = dist.Normal(100, self.variance)
+        # weights = gaussian_dist.sample((kernel_size,)).cuda()
+        # weights = torch.cat(weights.sort())
+        # weights[weights > 200] = 200
+        # weights[weights < 0] = 0
+        
+        # kernel_weights = torch.empty(kernel_size, kernel_size).cuda()
+        # for i in range(0, math.ceil(kernel_size / 2)):
+        #     kernel_weights[i, i:kernel_size-i] = weights[i]
+        #     kernel_weights[kernel_size - i - 1, i:kernel_size-i] = weights[i]
+        #     for j in range(i + 1, kernel_size - i):
+        #         kernel_weights[j, i] = weights[i]
+        #         kernel_weights[j, kernel_size-i-1] = weights[i]
+        # kernel_weights = kernel_weights.repeat
+        kernel_weights = torch.full((kernel_size, kernel_size), 1.0).cuda()
+        return kernel_weights
+
+    def forward(self, x):
+        x = self.to_grayscale(x)
+        # Get the Gaussian kernel based on the mean and log variance
+        kernel_weights = self.get_gaussian_kernel(self.kernel_size)
+        
+        # # Calculate padding to keep the input and output sizes the same
+        # padding = self.kernel_size // 2
+
+        # Apply Gaussian blur using the learned kernel
+        blurred = F.conv2d(x, kernel_weights.unsqueeze(0).unsqueeze(0), padding=(self.kernel_size // 2, self.kernel_size // 2))
+        blurred = blurred.repeat(1, 3, 1, 1)
+
+        return blurred

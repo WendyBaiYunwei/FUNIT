@@ -9,7 +9,7 @@ import sys
 import argparse
 import shutil
 
-from tensorboardX import SummaryWriter
+# from tensorboardX import SummaryWriter
 
 from utils import get_config, get_train_loaders, make_result_folders
 from utils import write_loss, write_html, write_1images, Timer
@@ -63,11 +63,12 @@ train_content_loader = loaders[0]
 train_class_loader = loaders[1]
 test_content_loader = loaders[2]
 test_class_loader = loaders[3]
+test_class_loader2 = loaders[-1]
 
 # Setup logger and output folders
 model_name = os.path.splitext(os.path.basename(opts.config))[0]
-train_writer = SummaryWriter(
-    os.path.join(opts.output_path + "/logs", model_name))
+# train_writer = SummaryWriter(
+#     os.path.join(opts.output_path + "/logs", model_name))
 output_directory = os.path.join(opts.output_path + "/outputs", model_name)
 checkpoint_directory, image_directory = make_result_folders(output_directory)
 shutil.copy(opts.config, os.path.join(output_directory, 'config.yaml'))
@@ -88,7 +89,7 @@ while True:
 
         if (iterations + 1) % config['log_iter'] == 0:
             print("Iteration: %08d/%08d" % (iterations + 1, max_iter))
-            write_loss(iterations, trainer, train_writer)
+            # write_loss(iterations, trainer, train_writer)
 
         if ((iterations + 1) % config['image_save_iter'] == 0 or (
                 iterations + 1) % config['image_display_iter'] == 0):
@@ -114,8 +115,12 @@ while True:
                     test_image_outputs = trainer.test(test_co_data,
                                                       test_cl_data,
                                                       opts.multigpus)
-                    write_1images(test_image_outputs, image_directory,
-                                  'test_%s_%02d' % (key_str, t))
+                    write_1images(test_image_outputs[:-1], image_directory,
+                                  'test_%s_%02dcombined' % (key_str, t))
+                    write_1images((test_image_outputs[-1],), image_directory,
+                                  'test_%s_%02doriginal' % (key_str, t))
+                    # write_1images((b4transform[0].cuda(),), image_directory,
+                    #               'test_%s_%02d2' % (key_str, t))
 
         if (iterations + 1) % config['snapshot_save_iter'] == 0:
             trainer.save(checkpoint_directory, iterations, opts.multigpus)

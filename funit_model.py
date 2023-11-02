@@ -28,10 +28,11 @@ class FUNITModel(nn.Module):
         xb = cl_data[0].cuda()
         lb = cl_data[1].cuda()
         if mode == 'gen_update':
+            c_xa_erased = self.gen.enc_content(self.gen.erase(xa))
             c_xa = self.gen.enc_content(xa)
             s_xa = self.gen.enc_class_model(xa)
             s_xb = self.gen.enc_class_model(xb)
-            xt = self.gen.decode(c_xa, s_xb)  # translation
+            xt = self.gen.decode(c_xa_erased, s_xb)  # translation
             xr = self.gen.decode(c_xa, s_xa)  # reconstruction
             l_adv_t, gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb)
             l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la)
@@ -76,24 +77,29 @@ class FUNITModel(nn.Module):
         self.gen_test.eval()
         xa = co_data[0].cuda()
         xb = cl_data[0].cuda()
+        xa_erased = self.gen.erase(xa)
+        c_xa_erased = self.gen.enc_content(xa_erased)
         c_xa_current = self.gen.enc_content(xa)
         s_xa_current = self.gen.enc_class_model(xa)
         s_xb_current = self.gen.enc_class_model(xb)
-        xt_current = self.gen.decode(c_xa_current, s_xb_current)
+        xt_current = self.gen.decode(c_xa_erased, s_xb_current)
         xr_current = self.gen.decode(c_xa_current, s_xa_current)
+        xa_erased = self.gen_test.erase(xa)
+        c_xa_erased = self.gen_test.enc_content(xa_erased)
         c_xa = self.gen_test.enc_content(xa)
         s_xa = self.gen_test.enc_class_model(xa)
         s_xb = self.gen_test.enc_class_model(xb)
-        xt = self.gen_test.decode(c_xa, s_xb)
+        xt = self.gen_test.decode(c_xa_erased, s_xb)
         xr = self.gen_test.decode(c_xa, s_xa)
         self.train()
-        return xa, xr_current, xt_current, xb, xr, xt
+        return xa, xr_current, xt_current, xb, xr, xt, xa_erased
 
     def translate_k_shot(self, co_data, cl_data, k):
         self.eval()
         xa = co_data[0].cuda()
         xb = cl_data[0].cuda()
-        c_xa_current = self.gen_test.enc_content(xa)
+        # c_xa_current = self.gen_test.enc_content(xa)
+        c_xa_current = self.gen_test.enc_content(self.gen.erase(xa))
         if k == 1:
             c_xa_current = self.gen_test.enc_content(xa)
             s_xb_current = self.gen_test.enc_class_model(xb)
@@ -122,6 +128,7 @@ class FUNITModel(nn.Module):
         self.eval()
         xa = content_image.cuda()
         s_xb_current = class_code.cuda()
-        c_xa_current = self.gen_test.enc_content(xa)
+        # c_xa_current = self.gen_test.enc_content(xa)
+        c_xa_current = self.gen_test.enc_content(self.gen.erase(xa))
         xt_current = self.gen_test.decode(c_xa_current, s_xb_current)
         return xt_current
