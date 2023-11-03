@@ -40,10 +40,19 @@ class ImageLabelFilelist(data.Dataset):
         self.im_list = filelist_reader(os.path.join(filelist))
         self.transform = transform
         self.loader = loader
-        self.classes = sorted(
-            list(set([path.split('/')[0] for path in self.im_list])))
+        labels = [path.split('/')[0] for path in self.im_list]
+        self.classes = sorted(list(set(labels)))
         self.class_to_idx = {self.classes[i]: i for i in
-                             range(len(self.classes))}
+                        range(len(self.classes))}
+        k = -1
+        class_name = ''
+        str_to_idx = {}
+        for i in range(len(labels)):
+            if labels[i] != class_name:
+                k += 1
+            class_name = labels[i]
+            str_to_idx[class_name] = k
+        self.labels = [str_to_idx[str_label] for str_label in labels]
         self.imgs = [(im_path, self.class_to_idx[im_path.split('/')[0]]) for
                      im_path in self.im_list]
         self.return_paths = return_paths

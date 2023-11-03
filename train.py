@@ -11,7 +11,7 @@ import shutil
 
 # from tensorboardX import SummaryWriter
 
-from utils import get_config, get_train_loaders, make_result_folders
+from utils import get_config, get_train_loaders, make_result_folders, reorganize_data
 from utils import write_loss, write_html, write_1images, Timer
 from trainer import Trainer
 
@@ -59,11 +59,9 @@ else:
     config['gpus'] = 1
 
 loaders = get_train_loaders(config)
-train_content_loader = loaders[0]
-train_class_loader = loaders[1]
-test_content_loader = loaders[2]
-test_class_loader = loaders[3]
-test_class_loader2 = loaders[-1]
+train_loader = loaders[0]
+test_content_loader = loaders[1]
+test_class_loader = loaders[2]
 
 # Setup logger and output folders
 model_name = os.path.splitext(os.path.basename(opts.config))[0]
@@ -78,8 +76,10 @@ iterations = trainer.resume(checkpoint_directory,
                             multigpus=opts.multigpus) if opts.resume else 0
 
 while True:
-    for it, (co_data, cl_data) in enumerate(
-            zip(train_content_loader, train_class_loader)):
+    for it, data in enumerate(train_loader):
+        # data (batch, 2, 3, 128, 128)
+        # data = data[0]
+        co_data, cl_data = reorganize_data(data)
         with Timer("Elapsed time in update: %f"):
             d_acc = trainer.dis_update(co_data, cl_data, config)
             g_acc = trainer.gen_update(co_data, cl_data, config,
@@ -100,16 +100,18 @@ while True:
             else:
                 key_str = 'current'
             with torch.no_grad():
-                for t, (val_co_data, val_cl_data) in enumerate(
-                        zip(train_content_loader, train_class_loader)):
+                for t, val_data in enumerate(train_loader):
+                    val_co_data, val_cl_data = reorganize_data(val_data)
                     if t >= opts.test_batch_size:
                         break
                     val_image_outputs = trainer.test(val_co_data, val_cl_data,
                                                      opts.multigpus)
-                    write_1images(val_image_outputs, image_directory,
-                                  'train_%s_%02d' % (key_str, t))
-                for t, (test_co_data, test_cl_data) in enumerate(
-                            zip(test_content_loader, test_class_loader)):
+                    write_1images(val_image_outputs[:-1], image_directory,
+                                  'train_%s_%02dcombined' % (key_str, t))
+                    write_1images((val_image_outputs[-1],), image_directory,
+                                  'train_%s_%02doriginal' % (key_str, t))
+                for t, (test_co_data, test_cl_data) in enumerate(\
+                    zip(test_content_loader, test_class_loader)):
                     if t >= opts.test_batch_size:
                         break
                     test_image_outputs = trainer.test(test_co_data,

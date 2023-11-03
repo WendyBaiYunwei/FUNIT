@@ -34,14 +34,14 @@ class FUNITModel(nn.Module):
             s_xb = self.gen.enc_class_model(xb)
             xt = self.gen.decode(c_xa_erased, s_xb)  # translation
             xr = self.gen.decode(c_xa, s_xa)  # reconstruction
-            l_adv_t, gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb)
-            l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la)
+            l_adv_t, gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb, xb.detach(), xa.detach())
+            l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la, xa.detach(), xb.detach())
             _, xb_gan_feat = self.dis(xb, lb)
             _, xa_gan_feat = self.dis(xa, la)
-            l_c_rec = recon_criterion(xr_gan_feat.mean(3).mean(2),
-                                      xa_gan_feat.mean(3).mean(2))
-            l_m_rec = recon_criterion(xt_gan_feat.mean(3).mean(2),
-                                      xb_gan_feat.mean(3).mean(2))
+            l_c_rec = recon_criterion(xr_gan_feat,
+                                      xa_gan_feat)
+            l_m_rec = recon_criterion(xt_gan_feat,
+                                      xb_gan_feat)
             l_x_rec = recon_criterion(xr, xa)
             l_adv = 0.5 * (l_adv_t + l_adv_r)
             acc = 0.5 * (gacc_t + gacc_r)
@@ -51,23 +51,23 @@ class FUNITModel(nn.Module):
             return l_total, l_adv, l_x_rec, l_c_rec, l_m_rec, acc
         elif mode == 'dis_update':
             xb.requires_grad_()
-            l_real_pre, acc_r, resp_r = self.dis.calc_dis_real_loss(xb, lb)
+            l_real_pre, acc_r, resp_r = self.dis.calc_dis_real_loss(xb, lb, challenge=xa.detach())
             l_real = hp['gan_w'] * l_real_pre
             l_real.backward(retain_graph=True)
-            l_reg_pre = self.dis.calc_grad2(resp_r, xb)
-            l_reg = 10 * l_reg_pre
-            l_reg.backward()
+            # l_reg_pre = self.dis.calc_grad2(resp_r, xb)
+            # l_reg = 10 * l_reg_pre
+            # l_reg.backward()
             with torch.no_grad():
                 c_xa = self.gen.enc_content(xa)
                 s_xb = self.gen.enc_class_model(xb)
                 xt = self.gen.decode(c_xa, s_xb)
             l_fake_p, acc_f, resp_f = self.dis.calc_dis_fake_loss(xt.detach(),
-                                                                  lb)
+                                                                  lb, xb.detach(), xa.detach())
             l_fake = hp['gan_w'] * l_fake_p
             l_fake.backward()
-            l_total = l_fake + l_real + l_reg
+            l_total = l_fake + l_real #+loss_reg
             acc = 0.5 * (acc_f + acc_r)
-            return l_total, l_fake_p, l_real_pre, l_reg_pre, acc
+            return l_total, l_fake_p, l_real_pre, torch.zeros(l_real_pre.shape), acc
         else:
             assert 0, 'Not support operation'
 

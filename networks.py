@@ -15,6 +15,7 @@ import torch.distributions as dist
 from blocks import LinearBlock, Conv2dBlock, ResBlocks, ActFirstResBlock
 
 import math
+from utils import sim
 
 def assign_adain_params(adain_params, model):
     # assign the adain_params to the AdaIN layers in model
@@ -64,39 +65,63 @@ class GPPatchMcResDis(nn.Module):
         self.cnn_f = nn.Sequential(*cnn_f)
         self.cnn_c = nn.Sequential(*cnn_c)
 
-    def forward(self, x, y):
+
+
+    def forward(self, x, y, counterpart=None, challenge=None):
         assert(x.size(0) == y.size(0))
         feat = self.cnn_f(x)
         out = self.cnn_c(feat)
         index = torch.LongTensor(range(out.size(0))).cuda()
-        out = out[index, y, :, :]
-        return out, feat
+        # out = out[index, y, :, :]
+        # print(out.shape)
+        feat = feat.mean((2,3))
+        if counterpart == None and challenge == None:
+            return None, feat
+        elif counterpart == None:
+            challenge = self.cnn_f(challenge).mean((2,3))
+            new_out = -torch.log(sim(feat, challenge))
+        else:
+            challenge = self.cnn_f(challenge).mean((2,3))
+            pairlist = [challenge]
+            counterpart = self.cnn_f(counterpart).mean((2,3))
+            pairlist.append(counterpart)
+            pos_sim = sim(feat, pairlist[-1])
+            neg_sim = sim(feat, pairlist[0])
+            new_out = torch.log(pos_sim / (pos_sim + neg_sim))
+        return new_out, feat # new_out: batchsize, 1
 
-    def calc_dis_fake_loss(self, input_fake, input_label):
-        resp_fake, gan_feat = self.forward(input_fake, input_label)
-        total_count = torch.tensor(np.prod(resp_fake.size()),
-                                   dtype=torch.float).cuda()
+    def calc_dis_fake_loss(self, input_fake, input_label, counterpart, challenge):
+        resp_fake, gan_feat = self.forward(input_fake, input_label, counterpart, challenge)
+        # print(resp_fake)
+        # print(resp_fake.shape)
+        # total_count = torch.tensor(np.prod(resp_fake.size()),
+        #                            dtype=torch.float).cuda()
+        # print(total_count)
+        # exit()
         fake_loss = torch.nn.ReLU()(1.0 + resp_fake).mean()
-        correct_count = (resp_fake < 0).sum()
-        fake_accuracy = correct_count.type_as(fake_loss) / total_count
+        # correct_count = (resp_fake < 0).sum()
+        # fake_accuracy = correct_count.type_as(fake_loss) / total_count
+        fake_accuracy = fake_loss
         return fake_loss, fake_accuracy, resp_fake
 
-    def calc_dis_real_loss(self, input_real, input_label):
-        resp_real, gan_feat = self.forward(input_real, input_label)
-        total_count = torch.tensor(np.prod(resp_real.size()),
-                                   dtype=torch.float).cuda()
+    def calc_dis_real_loss(self, input_real, input_label, challenge):
+        resp_real, gan_feat = self.forward(input_real, input_label, challenge=challenge)
+        # total_count = torch.tensor(np.prod(resp_real.size()),
+        #                            dtype=torch.float).cuda()
         real_loss = torch.nn.ReLU()(1.0 - resp_real).mean()
-        correct_count = (resp_real >= 0).sum()
-        real_accuracy = correct_count.type_as(real_loss) / total_count
+        # correct_count = (resp_real >= 0).sum()
+        # real_accuracy = correct_count.type_as(real_loss) / total_count
+        real_accuracy = real_loss
         return real_loss, real_accuracy, resp_real
 
-    def calc_gen_loss(self, input_fake, input_fake_label):
-        resp_fake, gan_feat = self.forward(input_fake, input_fake_label)
-        total_count = torch.tensor(np.prod(resp_fake.size()),
-                                   dtype=torch.float).cuda()
+    def calc_gen_loss(self, input_fake, input_fake_label, counterpart, challenge):
+        resp_fake, gan_feat = self.forward(input_fake, input_fake_label, counterpart, challenge)
+        # total_count = torch.tensor(np.prod(resp_fake.size()),
+        #                            dtype=torch.float).cuda()
         loss = -resp_fake.mean()
-        correct_count = (resp_fake >= 0).sum()
-        accuracy = correct_count.type_as(loss) / total_count
+        # correct_count = (resp_fake >= 0).sum()
+        # accuracy = correct_count.type_as(loss) / total_count
+        accuracy = loss
         return loss, accuracy, gan_feat
 
     def calc_grad2(self, d_out, x_in):

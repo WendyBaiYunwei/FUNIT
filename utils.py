@@ -6,11 +6,13 @@ Licensed under the CC BY-NC-SA 4.0 license
 import os
 import yaml
 import time
+import numpy as np
 
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 import torchvision.utils as vutils
+import torch.nn.functional as F
 
 from data import ImageLabelFilelist
 
@@ -33,7 +35,7 @@ def loader_from_list(
         width=128,
         crop=True,
         num_workers=4,
-        shuffle=False,
+        shuffle=True,
         center_crop=False,
         return_paths=False,
         drop_last=True):
@@ -54,41 +56,76 @@ def loader_from_list(
 
     return loader
 
+def get_dichomy_loader(
+        episodes,
+        root,
+        file_list,
+        batch_size,
+        new_size=None,
+        height=128,
+        width=128,
+        crop=True,
+        num_workers=4,
+        shuffle=True,
+        center_crop=False,
+        return_paths=False,
+        drop_last=True):
 
-def get_evaluation_loaders(conf, shuffle_content=False):
-    batch_size = conf['batch_size']
-    num_workers = conf['num_workers']
-    new_size = conf['new_size']
-    width = conf['crop_image_width']
-    height = conf['crop_image_height']
-    content_loader = loader_from_list(
-            root=conf['data_folder_train'],
-            file_list=conf['data_list_train'],
-            batch_size=batch_size,
-            new_size=new_size,
-            height=height,
-            width=width,
-            crop=True,
-            num_workers=num_workers,
-            shuffle=shuffle_content,
-            center_crop=True,
-            return_paths=True,
-            drop_last=False)
+    transform_list = [transforms.Resize(new_size), transforms.CenterCrop((height, width)), \
+            transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
 
-    class_loader = loader_from_list(
-            root=conf['data_folder_test'],
-            file_list=conf['data_list_test'],
-            batch_size=batch_size * conf['k_shot'],
-            new_size=new_size,
-            height=height,
-            width=width,
-            crop=True,
-            num_workers=1,
-            shuffle=False,
-            center_crop=True,
-            return_paths=True,
-            drop_last=False)
-    return content_loader, class_loader
+    transform = transforms.Compose(transform_list)
+    dataset = ImageLabelFilelist(root,
+                                 file_list,
+                                 transform,
+                                 return_paths=return_paths)
+
+    train_sampler = CategoriesSampler(dataset.labels,
+                                    n_batch=episodes,
+                                    n_cls=2,
+                                    n_per=batch_size)
+
+    loader = DataLoader(dataset=dataset,
+                        num_workers=num_workers,
+                        batch_sampler=train_sampler,
+                        pin_memory=True)
+
+    return loader
+
+# def get_evaluation_loaders(conf, shuffle_content=False):
+#     batch_size = conf['batch_size']
+#     num_workers = conf['num_workers']
+#     new_size = conf['new_size']
+#     width = conf['crop_image_width']
+#     height = conf['crop_image_height']
+#     content_loader = loader_from_list(
+#             root=conf['data_folder_train'],
+#             file_list=conf['data_list_train'],
+#             batch_size=batch_size,
+#             new_size=new_size,
+#             height=height,
+#             width=width,
+#             crop=True,
+#             num_workers=num_workers,
+#             shuffle=shuffle_content,
+#             center_crop=True,
+#             return_paths=True,
+#             drop_last=False)
+
+#     class_loader = loader_from_list(
+#             root=conf['data_folder_test'],
+#             file_list=conf['data_list_test'],
+#             batch_size=batch_size * conf['k_shot'],
+#             new_size=new_size,
+#             height=height,
+#             width=width,
+#             crop=True,
+#             num_workers=1,
+#             shuffle=False,
+#             center_crop=True,
+#             return_paths=True,
+#             drop_last=False)
+#     return content_loader, class_loader
 
 
 def get_train_loaders(conf):
@@ -97,7 +134,9 @@ def get_train_loaders(conf):
     new_size = conf['new_size']
     width = conf['crop_image_width']
     height = conf['crop_image_height']
-    train_content_loader = loader_from_list(
+
+    train_loader = get_dichomy_loader(
+            episodes=conf['max_iter'],
             root=conf['data_folder_train'],
             file_list=conf['data_list_train'],
             batch_size=batch_size,
@@ -105,19 +144,11 @@ def get_train_loaders(conf):
             height=height,
             width=width,
             crop=True,
-            num_workers=num_workers)
-    train_class_loader = loader_from_list(
-            root=conf['data_folder_train'],
-            file_list=conf['data_list_train'],
-            batch_size=batch_size,
-            new_size=new_size,
-            height=height,
-            width=width,
-            crop=True,
-            num_workers=num_workers)
+            num_workers=1)
+
     test_content_loader = loader_from_list(
-            root=conf['data_folder_test'],
-            file_list=conf['data_list_test'],
+            root=conf['data_folder_train'],
+            file_list=conf['data_list_train'],
             batch_size=batch_size,
             new_size=new_size,
             height=height,
@@ -134,8 +165,7 @@ def get_train_loaders(conf):
             crop=True,
             num_workers=1)
 
-    return (train_content_loader, train_class_loader, test_content_loader,
-            test_class_loader)
+    return (train_loader, test_content_loader, test_class_loader)
 
 
 def get_config(config):
@@ -211,6 +241,9 @@ def write_loss(iterations, trainer, train_writer):
     for m in members:
         train_writer.add_scalar(m, getattr(trainer, m), iterations + 1)
 
+def sim(a, b):
+    cosine_sim = F.cosine_similarity(a, b, dim=1)
+    return torch.exp(cosine_sim)
 
 class Timer:
     def __init__(self, msg):
@@ -222,3 +255,44 @@ class Timer:
 
     def __exit__(self, exc_type, exc_value, exc_tb):
         print(self.msg % (time.time() - self.start_time))
+
+class CategoriesSampler():
+    def __init__(self, label, n_batch, n_cls, n_per):
+        self.n_batch = n_batch
+        self.n_cls = n_cls
+        self.n_per = n_per
+
+        label = np.array(label)
+        self.m_ind = []
+        for i in range(max(label) + 1):
+            ind = np.argwhere(label == i).reshape(-1)
+            ind = torch.from_numpy(ind)
+            self.m_ind.append(ind)
+
+    def __len__(self):
+        return self.n_batch
+
+    def __iter__(self):
+        for i_batch in range(self.n_batch):
+            batch = []
+            classes = torch.randperm(len(self.m_ind))[:self.n_cls]
+            for c in classes:
+                l = self.m_ind[c]
+                pos = torch.randperm(len(l))[:self.n_per]
+                batch.append(l[pos])
+            batch = torch.stack(batch).t().reshape(-1)
+            yield batch
+
+def reorganize_data(data):
+    img = data[0]
+    series = torch.arange(data[0].shape[0])
+    odd_idx = series % 2 == 1
+    even_idx = series % 2 == 0
+    co_img = img[odd_idx, :, :, :]
+    cl_img = img[even_idx, :, :, :]
+    labels = data[1]
+    co_y = labels[odd_idx]
+    cl_y = labels[even_idx]
+    co_data = (co_img, co_y)
+    cl_data = (cl_img, cl_y)
+    return co_data, cl_data
