@@ -82,7 +82,7 @@ def get_dichomy_loader(
 
     train_sampler = CategoriesSampler(dataset.labels,
                                     n_batch=episodes,
-                                    n_cls=2,
+                                    n_cls=2+1,
                                     n_per=batch_size)
 
     loader = DataLoader(dataset=dataset,
@@ -286,13 +286,15 @@ class CategoriesSampler():
 def reorganize_data(data):
     img = data[0]
     series = torch.arange(data[0].shape[0])
-    odd_idx = series % 2 == 1
-    even_idx = series % 2 == 0
-    co_img = img[odd_idx, :, :, :]
-    cl_img = img[even_idx, :, :, :]
+    idx1 = series % 3 == 0
+    idx2 = series % 3 == 1
+    idx3 = series % 3 == 2
+    co_img = img[idx1, :, :, :]
+    cl_img = img[idx2, :, :, :]
+    cn_img = img[idx3, :, :, :] # negative image
     labels = data[1]
-    co_y = labels[odd_idx]
-    cl_y = labels[even_idx]
+    co_y = labels[idx1]
+    cl_y = labels[idx2]
     co_data = (co_img, co_y)
     cl_data = (cl_img, cl_y)
-    return co_data, cl_data
+    return co_data, cl_data, cn_img

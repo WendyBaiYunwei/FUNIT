@@ -67,31 +67,28 @@ class GPPatchMcResDis(nn.Module):
 
 
 
-    def forward(self, x, y, counterpart=None, challenge=None):
-        assert(x.size(0) == y.size(0))
+    def forward(self, x, counterpart=None, original=None, challenge=None):
         feat = self.cnn_f(x)
         out = self.cnn_c(feat)
         index = torch.LongTensor(range(out.size(0))).cuda()
         resp = out[index, 0, :, :]
         # print(out.shape)
         feat = feat.mean((2,3))
-        if counterpart == None and challenge == None:
+        if counterpart == None:
             return None, feat
-        elif counterpart == None:
-            challenge = self.cnn_f(challenge).mean((2,3))
-            new_out = -torch.log(sim(feat, challenge))
         else:
-            challenge = self.cnn_f(challenge).mean((2,3))
-            pairlist = [challenge]
             counterpart = self.cnn_f(counterpart).mean((2,3))
-            pairlist.append(counterpart)
-            pos_sim = sim(feat, pairlist[-1])
-            neg_sim = sim(feat, pairlist[0])
-            new_out = torch.log(pos_sim / (pos_sim + neg_sim))
+            original = self.cnn_f(original).mean((2,3))
+            challenge = self.cnn_f(challenge).mean((2,3))
+            pos_sim = sim(feat, counterpart)
+            neg_sim1 = sim(feat, challenge)
+            neg_sim2 = sim(counterpart, challenge)
+            neg_sim3 = sim(original, challenge)
+            new_out = torch.log(pos_sim / (pos_sim + neg_sim1 + neg_sim2 + neg_sim3))
         return resp, new_out, feat # new_out: batchsize, 1
 
-    def calc_dis_fake_loss(self, input_fake, input_label, challenge):
-        resp_fake, sim_score, gan_feat = self.forward(input_fake, input_label, challenge=challenge)
+    def calc_dis_fake_loss(self, input_fake):
+        resp_fake, sim_score, gan_feat = self.forward(input_fake)
         # print(resp_fake)
         # print(resp_fake.shape)
         total_count = torch.tensor(np.prod(resp_fake.size()),
@@ -104,7 +101,7 @@ class GPPatchMcResDis(nn.Module):
         return fake_loss, fake_accuracy, resp_fake
 
     def calc_dis_real_loss(self, input_real):
-        resp_real, sim_score, gan_feat = self.forward(input_real, input_label, challenge=challenge)
+        resp_real, sim_score, gan_feat = self.forward(input_real)
         total_count = torch.tensor(np.prod(resp_real.size()),
                                    dtype=torch.float).cuda()
         real_loss = torch.nn.ReLU()(1.0 - resp_real).mean()
@@ -112,8 +109,8 @@ class GPPatchMcResDis(nn.Module):
         real_accuracy = correct_count.type_as(real_loss) / total_count
         return real_loss, real_accuracy, resp_real
 
-    def calc_gen_loss(self, input_fake, input_fake_label, counterpart, challenge):
-        resp_fake, sim_score, gan_feat = self.forward(input_fake, input_fake_label, counterpart, challenge)
+    def calc_gen_loss(self, input_fake, input_fake_label, counterpart, original, challenge):
+        resp_fake, sim_score, gan_feat = self.forward(input_fake, input_fake_label, counterpart, original, challenge)
         # total_count = torch.tensor(np.prod(resp_fake.size()),
         #                            dtype=torch.float).cuda()
         loss = -sim_score.mean()

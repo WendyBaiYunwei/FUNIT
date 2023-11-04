@@ -79,9 +79,9 @@ while True:
     for it, data in enumerate(train_loader):
         # data (batch, 2, 3, 128, 128)
         # data = data[0]
-        co_data, cl_data = reorganize_data(data)
+        co_data, cl_data, cn_data = reorganize_data(data)
         with Timer("Elapsed time in update: %f"):
-            d_acc = trainer.dis_update(co_data, cl_data, config)
+            d_acc = trainer.dis_update(co_data, cl_data, cn_data, config)
             g_acc = trainer.gen_update(co_data, cl_data, config,
                                        opts.multigpus)
             torch.cuda.synchronize()

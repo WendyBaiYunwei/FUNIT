@@ -57,9 +57,9 @@ class Trainer(nn.Module):
         update_average(this_model.gen_test, this_model.gen)
         return self.accuracy_gen_adv.item()
 
-    def dis_update(self, co_data, cl_data, hp):
+    def dis_update(self, co_data, cl_data, cn_data, hp):
         self.dis_opt.zero_grad()
-        al, lfa, lre, reg, acc = self.model(co_data, cl_data, hp, 'dis_update')
+        al, lfa, lre, reg, acc = self.model(co_data, cl_data, cn_data, hp, 'dis_update')
         self.loss_dis_total = torch.mean(al)
         self.loss_dis_fake_adv = torch.mean(lfa)
         self.loss_dis_real_adv = torch.mean(lre)

@@ -22,19 +22,20 @@ class FUNITModel(nn.Module):
         self.dis = GPPatchMcResDis(hp['dis'])
         self.gen_test = copy.deepcopy(self.gen)
 
-    def forward(self, co_data, cl_data, hp, mode):
+    def forward(self, co_data, cl_data, cn_data, hp, mode):
         xa = co_data[0].cuda()
         la = co_data[1].cuda()
         xb = cl_data[0].cuda()
         lb = cl_data[1].cuda()
+        xn = cn_data.cuda()
         if mode == 'gen_update':
             c_xa = self.gen.enc_content(xa)
             s_xa = self.gen.enc_class_model(xa)
             s_xb = self.gen.enc_class_model(xb)
             xt = self.gen.decode(c_xa, s_xb)  # translation
             xr = self.gen.decode(c_xa, s_xa)  # reconstruction
-            l_adv_t, gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb, xb.detach(), xa.detach())
-            l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la, xa.detach(), xb.detach())
+            l_adv_t, gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb, xb.detach(), xa.detach(), xn.detach())
+            l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la, xa.detach(), xb.detach(), xn.detach())
             _, xb_gan_feat = self.dis(xb, lb)
             _, xa_gan_feat = self.dis(xa, la)
             l_c_rec = recon_criterion(xr_gan_feat,
