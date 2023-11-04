@@ -177,7 +177,6 @@ class FewShotGen(nn.Module):
                        n_mlp_blks,
                        norm='none',
                        activ='relu')
-        self.erase = GaussianBlurLayer(kernel_size=17, channels=1)
 
     def forward(self, one_image, model_set):
         # reconstruct an image
