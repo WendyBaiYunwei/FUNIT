@@ -50,18 +50,17 @@ class FUNITModel(nn.Module):
             return l_total, l_adv, l_x_rec, l_c_rec, l_m_rec, acc
         elif mode == 'dis_update':
             xb.requires_grad_()
-            l_real_pre, acc_r, resp_r = self.dis.calc_dis_real_loss(xb, lb, challenge=xa.detach())
+            l_real_pre, acc_r, resp_r = self.dis.calc_dis_real_loss(xb)
             l_real = hp['gan_w'] * l_real_pre
             l_real.backward(retain_graph=True)
-            # l_reg_pre = self.dis.calc_grad2(resp_r, xb)
-            # l_reg = 10 * l_reg_pre
-            # l_reg.backward()
+            l_reg_pre = self.dis.calc_grad2(resp_r, xb)
+            l_reg = 10 * l_reg_pre
+            l_reg.backward()
             with torch.no_grad():
                 c_xa = self.gen.enc_content(xa)
                 s_xb = self.gen.enc_class_model(xb)
                 xt = self.gen.decode(c_xa, s_xb)
-            l_fake_p, acc_f, resp_f = self.dis.calc_dis_fake_loss(xt.detach(),
-                                                                  lb, xa.detach())
+            l_fake_p, acc_f, resp_f = self.dis.calc_dis_fake_loss(xt.detach())
             l_fake = hp['gan_w'] * l_fake_p
             l_fake.backward()
             l_total = l_fake + l_real #+loss_reg

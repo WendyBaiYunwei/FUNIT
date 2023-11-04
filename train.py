@@ -81,7 +81,7 @@ while True:
         # data = data[0]
         co_data, cl_data = reorganize_data(data)
         with Timer("Elapsed time in update: %f"):
-            # d_acc = trainer.dis_update(co_data, cl_data, config)
+            d_acc = trainer.dis_update(co_data, cl_data, config)
             g_acc = trainer.gen_update(co_data, cl_data, config,
                                        opts.multigpus)
             torch.cuda.synchronize()
