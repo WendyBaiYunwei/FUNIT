@@ -90,8 +90,8 @@ class GPPatchMcResDis(nn.Module):
             new_out = torch.log(pos_sim / (pos_sim + neg_sim))
         return new_out, feat # new_out: batchsize, 1
 
-    def calc_dis_fake_loss(self, input_fake, input_label, counterpart, challenge):
-        resp_fake, gan_feat = self.forward(input_fake, input_label, counterpart, challenge)
+    def calc_dis_fake_loss(self, input_fake, input_label, challenge):
+        resp_fake, gan_feat = self.forward(input_fake, input_label, challenge=challenge)
         # print(resp_fake)
         # print(resp_fake.shape)
         # total_count = torch.tensor(np.prod(resp_fake.size()),

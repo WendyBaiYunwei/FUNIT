@@ -81,11 +81,11 @@ while True:
         # data = data[0]
         co_data, cl_data = reorganize_data(data)
         with Timer("Elapsed time in update: %f"):
-            d_acc = trainer.dis_update(co_data, cl_data, config)
+            # d_acc = trainer.dis_update(co_data, cl_data, config)
             g_acc = trainer.gen_update(co_data, cl_data, config,
                                        opts.multigpus)
             torch.cuda.synchronize()
-            print('D acc: %.4f\t G acc: %.4f' % (d_acc, g_acc))
+            print('D acc: %.4f\t G acc: %.4f' % (g_acc, g_acc))
 
         if (iterations + 1) % config['log_iter'] == 0:
             print("Iteration: %08d/%08d" % (iterations + 1, max_iter))

@@ -62,7 +62,7 @@ class FUNITModel(nn.Module):
                 s_xb = self.gen.enc_class_model(xb)
                 xt = self.gen.decode(c_xa, s_xb)
             l_fake_p, acc_f, resp_f = self.dis.calc_dis_fake_loss(xt.detach(),
-                                                                  lb, xb.detach(), xa.detach())
+                                                                  lb, xa.detach())
             l_fake = hp['gan_w'] * l_fake_p
             l_fake.backward()
             l_total = l_fake + l_real #+loss_reg
