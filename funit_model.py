@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 from networks import FewShotGen, GPPatchMcResDis
-
+from utils import get_dichomy_loader
 
 def recon_criterion(predict, target):
     return torch.mean(torch.abs(predict - target))
@@ -21,6 +21,17 @@ class FUNITModel(nn.Module):
         self.gen = FewShotGen(hp['gen'])
         self.dis = GPPatchMcResDis(hp['dis'])
         self.gen_test = copy.deepcopy(self.gen)
+        self.train_loader = get_dichomy_loader(
+            episodes=hp['max_iter'],
+            root=hp['data_folder_train'],
+            file_list=hp['data_list_train'],
+            batch_size=1,
+            new_size=hp['new_size'],
+            height=hp['height'],
+            width=hp['width'],
+            crop=True,
+            num_workers=1,
+            n_cls=hp['pool_size'])
 
     def forward(self, co_data, cl_data, cn_data, hp, mode):
         xa = co_data[0].cuda()
@@ -67,6 +78,18 @@ class FUNITModel(nn.Module):
             l_total = l_fake + l_real #+loss_reg
             acc = 0.5 * (acc_f + acc_r)
             return l_total, l_fake_p, l_real_pre, torch.zeros(l_real_pre.shape), acc
+        elif mode == 'picker_update':
+            _, _, qry_features = self.dis(cl_data) # batch, q, feature_size
+            _, _, nb_features = self.dis(co_data) # qries and nbs are of different classes
+            matrix_forward = torch.bmm(qry_features, nb_features.transpose(2,1)) # q qries, n neighbors
+            matrix_reverse = torch.bmm(nb_features, qry_features.transpose(2,1))
+            scores_forward = self.get_score(qry = cl_data, nb = co_data, cn_data = xn)
+            scores_reverse = self.get_score(qry = co_data, nb = cl_data, cn_data = xn)
+            loss_forward = recon_criterion(matrix_forward, scores_forward)
+            loss_reverse = recon_criterion(matrix_reverse, scores_reverse)
+            loss = loss_forward + loss_reverse
+            loss.backward()
+            return loss
         else:
             assert 0, 'Not support operation'
 
@@ -124,3 +147,54 @@ class FUNITModel(nn.Module):
         c_xa_current = self.gen_test.enc_content(xa)
         xt_current = self.gen_test.decode(c_xa_current, s_xb_current)
         return xt_current
+
+    def get_score(self, qry, nb, cn_data):
+        with torch.no_grad():
+            c_xa = self.gen.enc_content(nb.detach())
+            # s_xa = self.gen.enc_class_model(xa)
+            s_xb = self.gen.enc_class_model(qry.detach())
+            translation = self.gen.decode(c_xa, s_xb)
+        real_degree = self.dis(translation, qry, nb, cn_data, selector=True)# how real the generation appears
+        # and is the generation similar to the right class?
+        return real_degree
+    
+    # optionally returns qry expansions of size: (expansion_size, 3, h, w)
+    # 'pool_size' copies of candidate neighbours are randomly sampled
+    # translations are conducted only with the best 'expansion_size' candidates
+    # best candidates are defined as those with the highest vector dot product
+    # the vectors are features learnt by picker
+    def pick(self, qry, expansion_size, get_img = False): # only one qry
+        # pool size should be <= class numbers ##slack
+        candidate_neighbours = next(iter(self.train_loader)) # from train sampler, size: pool_size, 3, h, w
+        candidate_neighbours = candidate_neighbours[0].cuda()
+        _, _, qry_features = self.dis(qry) # batch=1, feature_size
+        _, _, nb_features = self.dis(candidate_neighbours)
+        scores = []
+        with torch.no_grad():
+            scores = torch.mm(qry_features, nb_features.transpose(1,0)) # q qries, n neighbors
+            print(scores.shape)
+            exit()
+        scores, idxs = torch.sort(torch.stack(scores))
+        selected_nbs = candidate_neighbours[idxs][:expansion_size, :, :, :]
+        class_code = self.compute_k_style(qry, 1)
+        translations = []
+        with torch.no_grad():
+            for selected_i in range(expansion_size):
+                nb = selected_nbs[selected_i, :, :, :]
+                translation = self.translate_simple(nb, class_code)
+                translations.append(translation)
+        if get_img == True:
+            import numpy as np
+            from PIL import Image
+            for selected_i in range(expansion_size):
+                translation = translations[selected_i]
+                image = translation.detach().cpu().squeeze().numpy()
+                image = np.transpose(image, (1, 2, 0))
+                image = ((image + 1) * 0.5 * 255.0)
+                output_img = Image.fromarray(np.uint8(image))
+                output_img.save(f'./output/images/output{selected_i}', 'JPEG', quality=99)
+                print('Save output')
+        if get_img == False:
+            return torch.stack(translations)
+
+# yaml should contain original encoder path, and set poolsize and other hp

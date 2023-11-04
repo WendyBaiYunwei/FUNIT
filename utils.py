@@ -69,7 +69,8 @@ def get_dichomy_loader(
         shuffle=True,
         center_crop=False,
         return_paths=False,
-        drop_last=True):
+        drop_last=True,
+        n_cls=3):
 
     transform_list = [transforms.Resize(new_size), transforms.CenterCrop((height, width)), \
             transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
@@ -82,7 +83,7 @@ def get_dichomy_loader(
 
     train_sampler = CategoriesSampler(dataset.labels,
                                     n_batch=episodes,
-                                    n_cls=2+1,
+                                    n_cls=n_cls,
                                     n_per=batch_size)
 
     loader = DataLoader(dataset=dataset,

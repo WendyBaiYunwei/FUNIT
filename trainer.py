@@ -38,6 +38,9 @@ class Trainer(nn.Module):
         self.gen_opt = torch.optim.RMSprop(
             [p for p in gen_params if p.requires_grad],
             lr=lr_dis, weight_decay=cfg['weight_decay'])
+        self.picker_opt = torch.optim.RMSprop(
+            [p for p in gen_params if p.requires_grad],
+            lr=lr_dis, weight_decay=cfg['weight_decay'])
         self.dis_scheduler = get_scheduler(self.dis_opt, cfg)
         self.gen_scheduler = get_scheduler(self.gen_opt, cfg)
         self.apply(weights_init(cfg['init']))
@@ -68,6 +71,12 @@ class Trainer(nn.Module):
         self.dis_opt.step()
         return self.accuracy_dis_adv.item()
 
+    def picker_update(self, co_data, cl_data, cn_data, hp):
+        self.picker_opt.zero_grad()
+        loss = self.model(co_data, cl_data, cn_data, hp, 'picker_update')
+        self.picker_opt.step()
+        return loss.item()
+    
     def test(self, co_data, cl_data, multigpus):
         this_model = self.model.module if multigpus else self.model
         return this_model.test(co_data, cl_data)

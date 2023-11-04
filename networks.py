@@ -67,7 +67,7 @@ class GPPatchMcResDis(nn.Module):
 
 
 
-    def forward(self, x, counterpart=None, original=None, challenge=None):
+    def forward(self, x, counterpart=None, original=None, challenge=None, selector=False):
         feat = self.cnn_f(x)
         out = self.cnn_c(feat)
         index = torch.LongTensor(range(out.size(0))).cuda()
@@ -85,7 +85,11 @@ class GPPatchMcResDis(nn.Module):
             neg_sim2 = sim(counterpart, challenge)
             neg_sim3 = sim(original, challenge)
             new_out = torch.log(pos_sim / (pos_sim + neg_sim1 + neg_sim2 + neg_sim3))
-        return resp, new_out, feat # new_out: batchsize, 1
+        
+        if selector == False:
+            return resp, new_out, feat # new_out: batchsize, 1
+        else:
+            return new_out + torch.nn.ReLU()(1.0 + resp).mean()
 
     def calc_dis_fake_loss(self, input_fake):
         resp_fake, sim_score, gan_feat = self.forward(input_fake)
@@ -130,7 +134,6 @@ class GPPatchMcResDis(nn.Module):
         assert (grad_dout2.size() == x_in.size())
         reg = grad_dout2.sum()/batch_size
         return reg
-
 
 class FewShotGen(nn.Module):
     def __init__(self, hp):
