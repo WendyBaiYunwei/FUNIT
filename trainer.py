@@ -43,9 +43,9 @@ class Trainer(nn.Module):
         self.apply(weights_init(cfg['init']))
         self.model.gen_test = copy.deepcopy(self.model.gen)
 
-    def gen_update(self, co_data, cl_data, hp, multigpus):
+    def gen_update(self, co_data, cl_data, cn_data, hp, multigpus):
         self.gen_opt.zero_grad()
-        al, ad, xr, cr, sr, ac = self.model(co_data, cl_data, hp, 'gen_update')
+        al, ad, xr, cr, sr, ac = self.model(co_data, cl_data, cn_data, hp, 'gen_update')
         self.loss_gen_total = torch.mean(al)
         self.loss_gen_recon_x = torch.mean(xr)
         self.loss_gen_recon_c = torch.mean(cr)

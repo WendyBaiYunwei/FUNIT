@@ -75,7 +75,7 @@ class GPPatchMcResDis(nn.Module):
         # print(out.shape)
         feat = feat.mean((2,3))
         if counterpart == None:
-            return None, feat
+            return resp, None, feat
         else:
             counterpart = self.cnn_f(counterpart).mean((2,3))
             original = self.cnn_f(original).mean((2,3))
@@ -110,13 +110,13 @@ class GPPatchMcResDis(nn.Module):
         return real_loss, real_accuracy, resp_real
 
     def calc_gen_loss(self, input_fake, input_fake_label, counterpart, original, challenge):
-        resp_fake, sim_score, gan_feat = self.forward(input_fake, input_fake_label, counterpart, original, challenge)
-        # total_count = torch.tensor(np.prod(resp_fake.size()),
-        #                            dtype=torch.float).cuda()
-        loss = -sim_score.mean()
-        # correct_count = (resp_fake >= 0).sum()
-        # accuracy = correct_count.type_as(loss) / total_count
-        accuracy = loss
+        resp_fake, sim_score, gan_feat = self.forward(input_fake, counterpart, original, challenge)
+        total_count = torch.tensor(np.prod(resp_fake.size()),
+                                   dtype=torch.float).cuda()
+        loss = -sim_score.mean() + (-resp_fake.mean())
+        correct_count = (resp_fake >= 0).sum()
+        accuracy = correct_count.type_as(loss) / total_count
+        # accuracy = loss
         return loss, accuracy, gan_feat
 
     def calc_grad2(self, d_out, x_in):

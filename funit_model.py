@@ -36,8 +36,8 @@ class FUNITModel(nn.Module):
             xr = self.gen.decode(c_xa, s_xa)  # reconstruction
             l_adv_t, gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb, xb.detach(), xa.detach(), xn.detach())
             l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la, xa.detach(), xb.detach(), xn.detach())
-            _, xb_gan_feat = self.dis(xb, lb)
-            _, xa_gan_feat = self.dis(xa, la)
+            _, _, xb_gan_feat = self.dis(xb)
+            _, _, xa_gan_feat = self.dis(xa)
             l_c_rec = recon_criterion(xr_gan_feat,
                                       xa_gan_feat)
             l_m_rec = recon_criterion(xt_gan_feat,

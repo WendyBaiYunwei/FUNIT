@@ -82,10 +82,10 @@ while True:
         co_data, cl_data, cn_data = reorganize_data(data)
         with Timer("Elapsed time in update: %f"):
             d_acc = trainer.dis_update(co_data, cl_data, cn_data, config)
-            g_acc = trainer.gen_update(co_data, cl_data, config,
+            g_acc = trainer.gen_update(co_data, cl_data, cn_data, config,
                                        opts.multigpus)
             torch.cuda.synchronize()
-            print('D acc: %.4f\t G acc: %.4f' % (g_acc, g_acc))
+            print('D acc: %.4f\t G acc: %.4f' % (d_acc, g_acc))
 
         if (iterations + 1) % config['log_iter'] == 0:
             print("Iteration: %08d/%08d" % (iterations + 1, max_iter))
@@ -101,15 +101,13 @@ while True:
                 key_str = 'current'
             with torch.no_grad():
                 for t, val_data in enumerate(train_loader):
-                    val_co_data, val_cl_data = reorganize_data(val_data)
+                    val_co_data, val_cl_data, _ = reorganize_data(val_data)
                     if t >= opts.test_batch_size:
                         break
                     val_image_outputs = trainer.test(val_co_data, val_cl_data,
                                                      opts.multigpus)
-                    write_1images(val_image_outputs[:-1], image_directory,
-                                  'train_%s_%02dcombined' % (key_str, t))
-                    write_1images((val_image_outputs[-1],), image_directory,
-                                  'train_%s_%02doriginal' % (key_str, t))
+                    write_1images(val_image_outputs, image_directory,
+                                  'train_%s_%02d' % (key_str, t))
                 for t, (test_co_data, test_cl_data) in enumerate(\
                     zip(test_content_loader, test_class_loader)):
                     if t >= opts.test_batch_size:
@@ -117,10 +115,8 @@ while True:
                     test_image_outputs = trainer.test(test_co_data,
                                                       test_cl_data,
                                                       opts.multigpus)
-                    write_1images(test_image_outputs[:-1], image_directory,
-                                  'test_%s_%02dcombined' % (key_str, t))
-                    write_1images((test_image_outputs[-1],), image_directory,
-                                  'test_%s_%02doriginal' % (key_str, t))
+                    write_1images(test_image_outputs, image_directory,
+                                  'test_%s_%02d' % (key_str, t))
                     # write_1images((b4transform[0].cuda(),), image_directory,
                     #               'test_%s_%02d2' % (key_str, t))
 
