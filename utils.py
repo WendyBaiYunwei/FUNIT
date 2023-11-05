@@ -14,7 +14,7 @@ from torchvision import transforms
 import torchvision.utils as vutils
 import torch.nn.functional as F
 
-from data import ImageLabelFilelist
+from model.FUNIT.data import ImageLabelFilelist
 
 
 def update_average(model_tgt, model_src, beta=0.999):
@@ -145,7 +145,20 @@ def get_train_loaders(conf):
             height=height,
             width=width,
             crop=True,
-            num_workers=1)
+            num_workers=1,
+            n_cls=conf['way_size'])
+
+    test_loader = get_dichomy_loader(
+            episodes=conf['max_iter'],
+            root=conf['data_folder_test'],
+            file_list=conf['data_list_test'],
+            batch_size=batch_size,
+            new_size=new_size,
+            height=height,
+            width=width,
+            crop=True,
+            num_workers=1,
+            n_cls=conf['way_size'])
 
     test_content_loader = loader_from_list(
             root=conf['data_folder_train'],
@@ -166,8 +179,27 @@ def get_train_loaders(conf):
             crop=True,
             num_workers=1)
 
-    return (train_loader, test_content_loader, test_class_loader)
+    return (train_loader, test_loader, test_content_loader, test_class_loader)
 
+def get_pretrain_loaders(conf):
+    batch_size = conf['batch_size']
+    num_workers = conf['num_workers']
+    new_size = conf['new_size']
+    width = conf['crop_image_width']
+    height = conf['crop_image_height']
+
+    train_loader = loader_from_list(
+            root=conf['data_folder_train'],
+            file_list=conf['data_list_train'],
+            batch_size=batch_size,
+            new_size=new_size,
+            height=height,
+            width=width,
+            crop=True,
+            shuffle=True,
+            num_workers=1)
+
+    return train_loader
 
 def get_config(config):
     with open(config, 'r') as stream:

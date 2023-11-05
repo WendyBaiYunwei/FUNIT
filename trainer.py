@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.init as init
 from torch.optim import lr_scheduler
 
-from funit_model import FUNITModel
+from model.FUNIT.funit_model import FUNITModel
 
 
 def update_average(model_tgt, model_src, beta=0.999):
@@ -24,9 +24,9 @@ def update_average(model_tgt, model_src, beta=0.999):
             p_tgt.copy_(beta*p_tgt + (1. - beta)*p_src)
 
 
-class Trainer(nn.Module):
+class FUNIT_Trainer(nn.Module):
     def __init__(self, cfg):
-        super(Trainer, self).__init__()
+        super(FUNIT_Trainer, self).__init__()
         self.model = FUNITModel(cfg)
         lr_gen = cfg['lr_gen']
         lr_dis = cfg['lr_dis']

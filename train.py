@@ -47,7 +47,7 @@ max_iter = config['max_iter']
 if opts.batch_size != 0:
     config['batch_size'] = opts.batch_size
 
-trainer = Trainer(config)
+trainer = FUNIT_Trainer(config)
 trainer.cuda()
 if opts.multigpus:
     ngpus = torch.cuda.device_count()

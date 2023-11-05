@@ -15,7 +15,7 @@ parser.add_argument('--coor_file', type=str)
 opts = parser.parse_args()
 IMAGENET_TRAIN = opts.imagenet_folder
 OUT_PUT_FOLDER = opts.output_folder
-COOR_FILE = opts.coor_File
+COOR_FILE = opts.coor_file
 
 with open(COOR_FILE, 'rt') as f:
     lines = f.readlines()

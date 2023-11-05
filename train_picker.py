@@ -13,7 +13,7 @@ import shutil
 
 from utils import get_config, get_train_loaders, make_result_folders, reorganize_data
 from utils import write_loss, write_html, write_1images, Timer
-from trainer import Trainer
+from trainer import FUNIT_Trainer
 
 import torch.backends.cudnn as cudnn
 # Enable auto-tuner to find the best algorithm to use for your hardware.
@@ -45,7 +45,7 @@ max_iter = config['max_iter']
 if opts.batch_size != 0:
     config['batch_size'] = opts.batch_size
 
-trainer = Trainer(config)
+trainer = FUNIT_Trainer(config)
 trainer.cuda()
 if opts.multigpus:
     ngpus = torch.cuda.device_count()

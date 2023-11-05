@@ -12,7 +12,7 @@ import torch.backends.cudnn as cudnn
 from torchvision import transforms
 
 from utils import get_config
-from trainer import Trainer
+from trainer import FUNIT_Trainer
 
 import argparse
 
@@ -20,10 +20,10 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--config',
                     type=str,
-                    default='configs/funit_animals.yaml')
+                    default='configs/picker.yaml')
 parser.add_argument('--ckpt',
                     type=str,
-                    default='pretrained/animal119_gen_00200000.pt')
+                    default='pretrained/animal119_gen_00100000.pt')
 parser.add_argument('--class_image_folder',
                     type=str,
                     default='images/n02138411')
@@ -40,7 +40,7 @@ config = get_config(opts.config)
 config['batch_size'] = 1
 config['gpus'] = 1
 
-trainer = Trainer(config)
+trainer = FUNIT_Trainer(config)
 trainer.cuda()
 trainer.load_ckpt(opts.ckpt)
 trainer.eval()

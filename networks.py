@@ -12,10 +12,10 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 import torch.distributions as dist
 
-from blocks import LinearBlock, Conv2dBlock, ResBlocks, ActFirstResBlock
+from model.FUNIT.blocks import LinearBlock, Conv2dBlock, ResBlocks, ActFirstResBlock
 
 import math
-from utils import sim
+from model.FUNIT.utils import sim
 
 def assign_adain_params(adain_params, model):
     # assign the adain_params to the AdaIN layers in model

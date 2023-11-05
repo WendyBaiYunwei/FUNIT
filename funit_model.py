@@ -8,8 +8,8 @@ import copy
 import torch
 import torch.nn as nn
 
-from networks import FewShotGen, GPPatchMcResDis
-from utils import get_dichomy_loader
+from model.FUNIT.networks import FewShotGen, GPPatchMcResDis
+from model.FUNIT.utils import get_dichomy_loader
 
 def recon_criterion(predict, target):
     return torch.mean(torch.abs(predict - target))
@@ -27,8 +27,8 @@ class FUNITModel(nn.Module):
             file_list=hp['data_list_train'],
             batch_size=1,
             new_size=hp['new_size'],
-            height=hp['height'],
-            width=hp['width'],
+            height=hp['crop_image_height'],
+            width=hp['crop_image_width'],
             crop=True,
             num_workers=1,
             n_cls=hp['pool_size'])
@@ -158,25 +158,25 @@ class FUNITModel(nn.Module):
         # and is the generation similar to the right class?
         return real_degree
     
-    # optionally returns qry expansions of size: (expansion_size, 3, h, w)
+    # optionally returns qry expansions of size: (expansion_size + 1, 3, h, w)
     # 'pool_size' copies of candidate neighbours are randomly sampled
     # translations are conducted only with the best 'expansion_size' candidates
     # best candidates are defined as those with the highest vector dot product
     # the vectors are features learnt by picker
-    def pick(self, qry, expansion_size, get_img = False): # only one qry
+    def pick_traffic(self, qry, expansion_size=0, get_img = False, random=False): # only one qry
         # pool size should be <= class numbers ##slack
-        expansion_size += 1
         candidate_neighbours = next(iter(self.train_loader)) # from train sampler, size: pool_size, 3, h, w
         candidate_neighbours = candidate_neighbours[0].cuda()
         _, _, qry_features = self.dis(qry) # batch=1, feature_size
         _, _, nb_features = self.dis(candidate_neighbours)
-        scores = []
         with torch.no_grad():
-            scores = torch.mm(qry_features, nb_features.transpose(1,0)) # q qries, n neighbors
-            print(scores.shape)
-            exit()
-        scores, idxs = torch.sort(torch.stack(scores))
-        selected_nbs = candidate_neighbours[idxs][:expansion_size, :, :, :]
+            nb_features_trans = nb_features.transpose(1,0)
+            scores = torch.mm(qry_features, nb_features_trans) # q qries, n neighbors
+        if random == False:
+            scores, idxs = torch.sort(scores)
+            selected_nbs = candidate_neighbours[idxs][:expansion_size, :, :, :]
+        else:
+            selected_nbs = candidate_neighbours[:expansion_size, :, :, :]
         class_code = self.compute_k_style(qry, 1)
         translations = [self.translate_simple(qry, class_code)]
         with torch.no_grad():
@@ -187,15 +187,53 @@ class FUNITModel(nn.Module):
         if get_img == True:
             import numpy as np
             from PIL import Image
-            for selected_i in range(expansion_size):
+            for selected_i in range(expansion_size + 1):
                 translation = translations[selected_i]
                 image = translation.detach().cpu().squeeze().numpy()
                 image = np.transpose(image, (1, 2, 0))
                 image = ((image + 1) * 0.5 * 255.0)
                 output_img = Image.fromarray(np.uint8(image))
-                output_img.save(f'./output/images/output{selected_i}', 'JPEG', quality=99)
+                output_img.save(f'./images/output{selected_i}.jpg', 'JPEG', quality=99)
                 print('Save output')
+            print(torch.stack(translations).shape)
         if get_img == False:
-            return torch.stack(translations)
+            return torch.stack(translations).squeeze()
+    
+    def pick_animals(self, qry, expansion_size=0, get_img = False, random=False, img_id=None): # only one qry
+        # pool size should be <= class numbers ##slack
+        candidate_neighbours = next(iter(self.train_loader)) # from train sampler, size: pool_size, 3, h, w
+        candidate_neighbours = candidate_neighbours[0].cuda()
+        with torch.no_grad():
+            qry_features = self.gen.enc_content(qry).mean((2,3)) # batch=1, feature_size
+            nb_features = self.gen.enc_content(candidate_neighbours).mean((2,3))
+            nb_features_trans = nb_features.transpose(1,0)
+            scores = torch.mm(qry_features, nb_features_trans).squeeze() # q qries, n neighbors
+        if random == False:
+            scores, idxs = torch.sort(scores, descending=True) # more similar in front
+            idxs = idxs.long()
+            selected_nbs = candidate_neighbours.index_select(dim=0, index=idxs)
+            selected_nbs = selected_nbs[:expansion_size, :, :, :]
+        else:
+            selected_nbs = candidate_neighbours[:expansion_size, :, :, :]
+        class_code = self.compute_k_style(qry, 1)
+        translations = [self.translate_simple(qry, class_code)]
+        with torch.no_grad():
+            for selected_i in range(expansion_size):
+                nb = selected_nbs[selected_i, :, :, :].unsqueeze(0)
+                translation = self.translate_simple(nb, class_code)
+                translations.append(translation)
+        if get_img == True:
+            import numpy as np
+            from PIL import Image
+            for selected_i in range(expansion_size + 1):
+                translation = translations[selected_i]
+                image = translation.detach().cpu().squeeze().numpy()
+                image = np.transpose(image, (1, 2, 0))
+                image = ((image + 1) * 0.5 * 255.0)
+                output_img = Image.fromarray(np.uint8(image))
+                output_img.save(\
+                    f'/home/nus/Documents/research/augment/code/FEAT/model/FUNIT/images/output{img_id}_{selected_i}.jpg', 'JPEG', quality=99)
+                print('Save output')
+        return torch.stack(translations).squeeze()
 
 # yaml should contain original encoder path, and set poolsize and other hp
