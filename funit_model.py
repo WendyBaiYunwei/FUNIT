@@ -165,6 +165,7 @@ class FUNITModel(nn.Module):
     # the vectors are features learnt by picker
     def pick(self, qry, expansion_size, get_img = False): # only one qry
         # pool size should be <= class numbers ##slack
+        expansion_size += 1
         candidate_neighbours = next(iter(self.train_loader)) # from train sampler, size: pool_size, 3, h, w
         candidate_neighbours = candidate_neighbours[0].cuda()
         _, _, qry_features = self.dis(qry) # batch=1, feature_size
@@ -177,7 +178,7 @@ class FUNITModel(nn.Module):
         scores, idxs = torch.sort(torch.stack(scores))
         selected_nbs = candidate_neighbours[idxs][:expansion_size, :, :, :]
         class_code = self.compute_k_style(qry, 1)
-        translations = []
+        translations = [self.translate_simple(qry, class_code)]
         with torch.no_grad():
             for selected_i in range(expansion_size):
                 nb = selected_nbs[selected_i, :, :, :]

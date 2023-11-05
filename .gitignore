@@ -5,5 +5,6 @@
 *.pkl
 *.pyc
 datasets/*
-configs/funit_traffic_signs.yaml
+configs/*
 outputs/*
+pretrained/*
