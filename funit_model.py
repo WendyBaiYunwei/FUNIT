@@ -75,9 +75,9 @@ class FUNITModel(nn.Module):
             l_fake_p, acc_f, resp_f = self.dis.calc_dis_fake_loss(xt.detach())
             l_fake = hp['gan_w'] * l_fake_p
             l_fake.backward()
-            l_total = l_fake + l_real #+loss_reg
+            l_total = l_fake + l_real + l_reg
             acc = 0.5 * (acc_f + acc_r)
-            return l_total, l_fake_p, l_real_pre, torch.zeros(l_real_pre.shape), acc
+            return l_total, l_fake_p, l_real_pre, l_reg_pre, acc
         elif mode == 'picker_update':
             _, _, qry_features = self.dis(cl_data) # batch, q, feature_size
             _, _, nb_features = self.dis(co_data) # qries and nbs are of different classes

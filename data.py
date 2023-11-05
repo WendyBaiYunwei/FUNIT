@@ -11,8 +11,8 @@ import numpy as np
 
 
 def default_loader(path):
-    image = Image.open(path).convert('RGB')
-    return image ##slack
+    # image = Image.open(path).convert('RGB')
+    # return image ##slack
     image = io.imread(path)
     image = exposure.equalize_adapthist(image, clip_limit=0.1)
     image = (image * 255).astype(np.uint8)

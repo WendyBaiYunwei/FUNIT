@@ -146,7 +146,7 @@ def get_train_loaders(conf):
             width=width,
             crop=True,
             num_workers=1,
-            n_cls=conf['way_size'])
+            n_cls=conf['train_way_size'])
 
     test_loader = get_dichomy_loader(
             episodes=conf['max_iter'],
@@ -158,7 +158,7 @@ def get_train_loaders(conf):
             width=width,
             crop=True,
             num_workers=1,
-            n_cls=conf['way_size'])
+            n_cls=conf['train_way_size'])
 
     test_content_loader = loader_from_list(
             root=conf['data_folder_train'],
