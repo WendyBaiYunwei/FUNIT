@@ -32,6 +32,8 @@ class FUNITModel(nn.Module):
             crop=True,
             num_workers=1,
             n_cls=hp['pool_size'])
+        self.step = 0
+
 
     def forward(self, co_data, cl_data, cn_data, hp, mode):
         xa = co_data[0].cuda()
@@ -41,25 +43,47 @@ class FUNITModel(nn.Module):
         xn = cn_data.cuda()
         if mode == 'gen_update':
             c_xa = self.gen.enc_content(xa)
+            c_xb = self.gen.enc_content(xb)
+            c_xn = self.gen.enc_content(xn)
             s_xa = self.gen.enc_class_model(xa)
             s_xb = self.gen.enc_class_model(xb)
-            xt = self.gen.decode(c_xa, s_xb)  # translation
+            s_xn = self.gen.enc_class_model(xn)
+            combined_out = 0.7 * c_xa + (1 - 0.7) * c_xb
+            combined_out = combined_out.flatten(start_dim=2, end_dim=-1)
+            combined_out = self.gen.attention(combined_out)
+            combined_out = combined_out.reshape(c_xa.shape)
+            xt = self.gen.decode(combined_out, s_xb)  # translation
             xr = self.gen.decode(c_xa, s_xa)  # reconstruction
-            l_adv_t, gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb, xb.detach(), xa.detach(), xn.detach())
-            l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la, xa.detach(), xb.detach(), xn.detach())
-            _, _, xb_gan_feat = self.dis(xb)
-            _, _, xa_gan_feat = self.dis(xa)
-            l_c_rec = recon_criterion(xr_gan_feat,
-                                      xa_gan_feat)
-            l_m_rec = recon_criterion(xt_gan_feat,
-                                      xb_gan_feat)
+            xb_r = self.gen.decode(c_xb, s_xb)
+            xn_r = self.gen.decode(c_xn, s_xn)
+            sim_t, l_adv_t, prim_sim_loss,\
+                  gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb, counterpart=xb_r.detach(), original=xr.detach(), challenge=xn_r.detach())
+            # sim_r, l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la, counterpart=xr.detach(), original=xb.detach(), challenge=xn.detach())
+            l_contrast = self.dis.calc_contrast_loss(xt, la)
+            
+            # print(l_contrast.shape)
+            # _, _, xb_gan_feat = self.dis(xb)
+            # _, _, xa_gan_feat = self.dis(xa)
+            # l_c_rec = recon_criterion(xr_gan_feat,
+            #                           xa_gan_feat)
+            # l_m_rec = recon_criterion(xt_gan_feat,
+            #                           xb_gan_feat)
+            # l_c_rec = recon_criterion(c_xa,
+            #                           xa_ground_truth)
+            # l_m_rec = recon_criterion(c_xa,
+            #                           xb_ground_truth)
             l_x_rec = recon_criterion(xr, xa)
-            l_adv = 0.5 * (l_adv_t + l_adv_r)
-            acc = 0.5 * (gacc_t + gacc_r)
-            l_total = (hp['gan_w'] * l_adv + hp['r_w'] * l_x_rec + hp[
-                'fm_w'] * (l_c_rec + l_m_rec))
+            l_adv = l_adv_t
+            acc = gacc_t
+            l_contrast *= 0.5
+            
+            if self.step % 20 == 0:
+                print(l_adv, 'recon', l_x_rec, 'sim_t', sim_t, 'prim_sim_loss', prim_sim_loss, 'contrast', l_contrast)
+            self.step += 1
+            l_total = (hp['gan_w'] * (l_adv + sim_t + prim_sim_loss + l_contrast) + 0.1 * (l_x_rec)) #+ hp[
+                # 'fm_w'] * (l_c_rec + l_m_rec))
             l_total.backward()
-            return l_total, l_adv, l_x_rec, l_c_rec, l_m_rec, acc
+            return l_total, l_adv, l_x_rec, sim_t, prim_sim_loss, acc ## slack
         elif mode == 'dis_update':
             xb.requires_grad_()
             l_real_pre, acc_r, resp_r = self.dis.calc_dis_real_loss(xb)
@@ -70,8 +94,13 @@ class FUNITModel(nn.Module):
             l_reg.backward()
             with torch.no_grad():
                 c_xa = self.gen.enc_content(xa)
+                c_xb = self.gen.enc_content(xb)
                 s_xb = self.gen.enc_class_model(xb)
-                xt = self.gen.decode(c_xa, s_xb)
+                combined_out = 0.7 * c_xa + (1 - 0.7) * c_xb
+                combined_out = combined_out.flatten(start_dim=2, end_dim=-1)
+                combined_out = self.gen.attention(combined_out)
+                combined_out = combined_out.reshape(c_xa.shape)
+                xt = self.gen.decode(combined_out, s_xb)
             l_fake_p, acc_f, resp_f = self.dis.calc_dis_fake_loss(xt.detach())
             l_fake = hp['gan_w'] * l_fake_p
             l_fake.backward()
@@ -100,14 +129,24 @@ class FUNITModel(nn.Module):
         xa = co_data[0].cuda()
         xb = cl_data[0].cuda()
         c_xa_current = self.gen.enc_content(xa)
+        c_xb_current = self.gen.enc_content(xb)
         s_xa_current = self.gen.enc_class_model(xa)
         s_xb_current = self.gen.enc_class_model(xb)
-        xt_current = self.gen.decode(c_xa_current, s_xb_current)
+        combined_out = 0.7 * c_xa_current + (1 - 0.7) * c_xb_current
+        combined_out = combined_out.flatten(start_dim=2, end_dim=-1)
+        combined_out = self.gen.attention(combined_out)
+        combined_out = combined_out.reshape(c_xa_current.shape)
+        xt_current = self.gen.decode(combined_out, s_xb_current)
         xr_current = self.gen.decode(c_xa_current, s_xa_current)
         c_xa = self.gen_test.enc_content(xa)
+        c_xb = self.gen_test.enc_content(xb)
         s_xa = self.gen_test.enc_class_model(xa)
         s_xb = self.gen_test.enc_class_model(xb)
-        xt = self.gen_test.decode(c_xa, s_xb)
+        combined_out = 0.7 * c_xa + (1 - 0.7) * c_xb
+        combined_out = combined_out.flatten(start_dim=2, end_dim=-1)
+        combined_out = self.gen_test.attention(combined_out)
+        combined_out = combined_out.reshape(c_xa_current.shape)
+        xt = self.gen_test.decode(combined_out, s_xb)
         xr = self.gen_test.decode(c_xa, s_xa)
         self.train()
         return xa, xr_current, xt_current, xb, xr, xt

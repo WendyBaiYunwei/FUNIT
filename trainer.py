@@ -106,8 +106,10 @@ class FUNIT_Trainer(nn.Module):
     def save(self, snapshot_dir, iterations, multigpus):
         this_model = self.model.module if multigpus else self.model
         # Save generators, discriminators, and optimizers
-        gen_name = os.path.join(snapshot_dir, 'gen_%08d.pt' % (iterations + 1))
-        dis_name = os.path.join(snapshot_dir, 'dis_%08d.pt' % (iterations + 1))
+        gen_name = os.path.join(snapshot_dir, 'gen_9%08d.pt' % (iterations + 1))
+        dis_name = os.path.join(snapshot_dir, 'dis_9%08d.pt' % (iterations + 1))
+        # gen_name = os.path.join(snapshot_dir, 'gen_99999999.pt')
+        # dis_name = os.path.join(snapshot_dir, 'dis_99999999.pt')
         opt_name = os.path.join(snapshot_dir, 'optimizer.pt')
         torch.save({'gen': this_model.gen.state_dict(),
                     'gen_test': this_model.gen_test.state_dict()}, gen_name)

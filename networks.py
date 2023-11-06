@@ -64,35 +64,79 @@ class GPPatchMcResDis(nn.Module):
                              activation_first=True)]
         self.cnn_f = nn.Sequential(*cnn_f)
         self.cnn_c = nn.Sequential(*cnn_c)
-
+        self.classifier = nn.Sequential(ContentEncoder(downs=3,
+                                    n_res=2,
+                                    input_dim=3,
+                                    dim=64,
+                                    norm='in',
+                                    activ='relu',
+                                    pad_type='reflect',
+                                    get_mean=True),
+                                    nn.Linear(512, hp['num_classes']))
+        state_dict = torch.load('/home/nus/Documents/research/augment/code/FEAT/Traffic-Translator-Pre/0.05_0.1_[75, 150, 300]/checkpoint.pth')['state_dict']
+        new_dict = {}
+        for k in self.classifier.state_dict().keys():
+            new_k = '.'.join(k.split('.')[1:])
+            if new_k != 'weight' and new_k != 'bias':
+                new_k = 'encoder.' + new_k
+            else:
+                new_k = 'fc.' + new_k
+            new_dict[k] = state_dict[new_k]
+        self.classifier.load_state_dict(new_dict)
+        for params in self.classifier:
+            params.requires_grad = False
+        
+        self.pretrained_encoder = nn.Sequential(ContentEncoder(downs=3,
+            n_res=2,
+            input_dim=3,
+            dim=64,
+            norm='in',
+            activ='relu',
+            pad_type='reflect',
+            get_mean=True),
+            nn.Linear(512, hp['num_classes']))
+        new_dict = {}
+        for k in self.pretrained_encoder.state_dict().keys():
+            new_k = '.'.join(k.split('.')[1:])
+            if new_k != 'weight' and new_k != 'bias':
+                new_k = 'encoder.' + new_k
+            else:
+                new_k = 'fc.' + new_k
+            new_dict[k] = state_dict[new_k]
+        self.pretrained_encoder.load_state_dict(new_dict)
+        for params in self.pretrained_encoder:
+            params.requires_grad = False
 
 
     def forward(self, x, counterpart=None, original=None, challenge=None, selector=False):
         feat = self.cnn_f(x)
         out = self.cnn_c(feat)
         index = torch.LongTensor(range(out.size(0))).cuda()
-        resp = out[index, 0, :, :]
-        # print(out.shape)
-        feat = feat.mean((2,3))
-        if counterpart == None:
-            return resp, None, feat
+        resp = torch.tanh(out[index, 0, :, :])
+        if counterpart == None: # return feature and disc output only
+            return resp
         else:
-            counterpart = self.cnn_f(counterpart).mean((2,3))
-            original = self.cnn_f(original).mean((2,3))
-            challenge = self.cnn_f(challenge).mean((2,3))
-            pos_sim = sim(feat, counterpart)
-            neg_sim1 = sim(feat, challenge)
-            neg_sim2 = sim(counterpart, challenge)
-            neg_sim3 = sim(original, challenge)
-            new_out = torch.log(pos_sim / (pos_sim + neg_sim1 + neg_sim2 + neg_sim3))
+            input_feat = self.pretrained_encoder(x)
+            counterpart = self.pretrained_encoder(counterpart)
+            idxs = torch.randperm(len(counterpart)).cuda()
+            counterpart = torch.index_select(counterpart, 0, idxs)
+            original = self.pretrained_encoder(original)
+            challenge = self.pretrained_encoder(challenge)
+            pos_sim1 = sim(input_feat, counterpart)
+            neg_sim1 = sim(counterpart, challenge)
+            # neg_sim2 = sim(counterpart2, challenge)
+            neg_sim2 = sim(original, challenge)
+            # print(pos_sim1, pos_sim2, neg_sim1, neg_sim2)
+            new_out = torch.log((pos_sim1 + 1e-5) / (pos_sim1 + neg_sim1 + neg_sim2 + 1e-5))
+            primary_sim = torch.log(pos_sim1 + 1e-5) * 10
         
-        if selector == False:
-            return resp, new_out, feat # new_out: batchsize, 1
-        else:
-            return new_out + torch.nn.ReLU()(1.0 + resp).mean()
+            if selector == True: # selector score
+                return new_out.mean() + primary_sim.mean() + torch.nn.ReLU()(1.0 + resp).mean()
+            else:
+                return resp, new_out, primary_sim, feat
 
     def calc_dis_fake_loss(self, input_fake):
-        resp_fake, sim_score, gan_feat = self.forward(input_fake)
+        resp_fake = self.forward(input_fake)
         # print(resp_fake)
         # print(resp_fake.shape)
         total_count = torch.tensor(np.prod(resp_fake.size()),
@@ -105,7 +149,7 @@ class GPPatchMcResDis(nn.Module):
         return fake_loss, fake_accuracy, resp_fake
 
     def calc_dis_real_loss(self, input_real):
-        resp_real, sim_score, gan_feat = self.forward(input_real)
+        resp_real = self.forward(input_real)
         total_count = torch.tensor(np.prod(resp_real.size()),
                                    dtype=torch.float).cuda()
         real_loss = torch.nn.ReLU()(1.0 - resp_real).mean()
@@ -114,14 +158,19 @@ class GPPatchMcResDis(nn.Module):
         return real_loss, real_accuracy, resp_real
 
     def calc_gen_loss(self, input_fake, input_fake_label, counterpart, original, challenge):
-        resp_fake, sim_score, gan_feat = self.forward(input_fake, counterpart, original, challenge)
+        resp_fake, sim_score, prim_sim_loss, gan_feat = self.forward(input_fake, counterpart, original, challenge)
         total_count = torch.tensor(np.prod(resp_fake.size()),
                                    dtype=torch.float).cuda()
-        loss = -sim_score.mean() + (-resp_fake.mean())
+        sim_score = -sim_score.mean()
+        resp_fake = -resp_fake.mean()
+        prim_sim_loss = -prim_sim_loss.mean()
+        loss = sim_score + resp_fake # right class loss + adversarial loss
         correct_count = (resp_fake >= 0).sum()
         accuracy = correct_count.type_as(loss) / total_count
         # accuracy = loss
-        return loss, accuracy, gan_feat
+        # print(-sim_score.mean(), (-resp_fake.mean()))
+        # exit()
+        return sim_score, resp_fake, prim_sim_loss, accuracy, gan_feat
 
     def calc_grad2(self, d_out, x_in):
         batch_size = x_in.size(0)
@@ -135,6 +184,11 @@ class GPPatchMcResDis(nn.Module):
         reg = grad_dout2.sum()/batch_size
         return reg
 
+    def calc_contrast_loss(self, input_fake, content_label):
+        y_ = self.classifier(input_fake)[:, content_label[0].item()]
+        y_ = torch.tanh(y_) + 1.0
+        return y_.mean()
+    
 class FewShotGen(nn.Module):
     def __init__(self, hp):
         super(FewShotGen, self).__init__()
@@ -175,6 +229,26 @@ class FewShotGen(nn.Module):
                        n_mlp_blks,
                        norm='none',
                        activ='relu')
+        # state_dict = torch.load('/home/nus/Documents/research/augment/code/FEAT/Traffic-Translator-Pre/0.05_0.1_[75, 150, 300]/checkpoint.pth')
+        # new_dict = {}
+        # for k in self.enc_content.state_dict().keys(): # repeated
+        #     new_k = k
+        #     if 'encoder.' in k:
+        #         new_k = 'encoder.' + k
+        #     new_dict[k] = state_dict[new_k]
+        # self.enc_content.load_state_dict(new_dict)
+        # self.attention = nn.Transformer(
+        #     d_model=256,
+        #     nhead=4,
+        #     num_encoder_layers=2,
+        #     dim_feedforward=256
+        # ).encoder
+
+        state_dict = torch.load('/home/nus/Documents/research/augment/code/FEAT/Traffic-Translator-Pre/0.05_0.1_[75, 150, 300]/checkpoint.pth')['state_dict']
+        new_dict = {}
+        for k in self.enc_content.state_dict().keys():
+            new_dict[k] = state_dict['encoder.' + k]
+        self.enc_content.load_state_dict(new_dict)
 
     def forward(self, one_image, model_set):
         # reconstruct an image
@@ -228,7 +302,7 @@ class ClassModelEncoder(nn.Module):
 
 
 class ContentEncoder(nn.Module):
-    def __init__(self, downs, n_res, input_dim, dim, norm, activ, pad_type):
+    def __init__(self, downs, n_res, input_dim, dim, norm, activ, pad_type, get_mean=False):
         super(ContentEncoder, self).__init__()
         self.model = []
         self.model += [Conv2dBlock(input_dim, dim, 7, 1, 3,
@@ -247,8 +321,13 @@ class ContentEncoder(nn.Module):
                                  pad_type=pad_type)]
         self.model = nn.Sequential(*self.model)
         self.output_dim = dim
+        self.get_mean = get_mean
 
     def forward(self, x):
+        if self.get_mean == True:
+            x = self.model(x)
+            x = torch.mean(x, (2,3))
+            return x
         return self.model(x)
 
 

@@ -275,8 +275,9 @@ def write_loss(iterations, trainer, train_writer):
         train_writer.add_scalar(m, getattr(trainer, m), iterations + 1)
 
 def sim(a, b):
-    cosine_sim = F.cosine_similarity(a, b, dim=1)
-    return torch.exp(cosine_sim)
+    normed_cos = (F.cosine_similarity(a, b, dim=1) + 1) / 2
+    # cosine_sim = torch.tanh((normed_cos - 0.6) * 2)
+    return normed_cos
 
 class Timer:
     def __init__(self, msg):
