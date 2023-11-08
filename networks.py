@@ -8,14 +8,9 @@ import numpy as np
 import torch
 from torch import nn
 from torch import autograd
-import torch.nn.functional as F
-import torchvision.transforms as transforms
-import torch.distributions as dist
 
 from model.FUNIT.blocks import LinearBlock, Conv2dBlock, ResBlocks, ActFirstResBlock
 
-import math
-from model.FUNIT.utils import sim
 
 def assign_adain_params(adain_params, model):
     # assign the adain_params to the AdaIN layers in model
@@ -58,101 +53,32 @@ class GPPatchMcResDis(nn.Module):
         nf_out = np.min([nf * 2, 1024])
         cnn_f += [ActFirstResBlock(nf, nf, None, 'lrelu', 'none')]
         cnn_f += [ActFirstResBlock(nf, nf_out, None, 'lrelu', 'none')]
-        cnn_c = [Conv2dBlock(nf_out, 10, 1, 1, #hp['num_classes']
+        cnn_c = [Conv2dBlock(nf_out, hp['num_classes'], 1, 1,
                              norm='none',
                              activation='lrelu',
                              activation_first=True)]
         self.cnn_f = nn.Sequential(*cnn_f)
         self.cnn_c = nn.Sequential(*cnn_c)
-        self.classifier = nn.Sequential(ContentEncoder(downs=3,
-                                    n_res=2,
-                                    input_dim=3,
-                                    dim=64,
-                                    norm='in',
-                                    activ='relu',
-                                    pad_type='reflect',
-                                    get_mean=True),
-                                    nn.Linear(512, 61))
-        state_dict = torch.load('/home/nus/Documents/research/augment/code/FEAT/Traffic-Translator-Pre/0.05_0.1_[75, 150, 300]/checkpoint.pth')['state_dict']
-        new_dict = {}
-        for k in self.classifier.state_dict().keys():
-            new_k = '.'.join(k.split('.')[1:])
-            if new_k != 'weight' and new_k != 'bias':
-                new_k = 'encoder.' + new_k
-            else:
-                new_k = 'fc.' + new_k
-            new_dict[k] = state_dict[new_k]
-        self.classifier.load_state_dict(new_dict)
-        for params in self.classifier:
-            params.requires_grad = False
-        
-        self.pretrained_encoder = nn.Sequential(ContentEncoder(downs=3,
-            n_res=2,
-            input_dim=3,
-            dim=64,
-            norm='in',
-            activ='relu',
-            pad_type='reflect',
-            get_mean=True),
-            nn.Linear(512, 61))
-        new_dict = {}
-        for k in self.pretrained_encoder.state_dict().keys():
-            new_k = '.'.join(k.split('.')[1:])
-            if new_k != 'weight' and new_k != 'bias':
-                new_k = 'encoder.' + new_k
-            else:
-                new_k = 'fc.' + new_k
-            new_dict[k] = state_dict[new_k]
-        self.pretrained_encoder.load_state_dict(new_dict)
-        for params in self.pretrained_encoder:
-            params.requires_grad = False
 
-
-    def forward(self, x, counterpart=None, original=None, challenge=None, selector=False):
+    def forward(self, x, y):
+        assert(x.size(0) == y.size(0))
         feat = self.cnn_f(x)
         out = self.cnn_c(feat)
         index = torch.LongTensor(range(out.size(0))).cuda()
-        resp = torch.tanh(out[index, :, :, :]).mean((1,2,3))
-        if counterpart == None: # return feature and disc output only
-            return resp
-        else:
-            # input_feat = self.pretrained_encoder(x)
-            # counterpart = self.pretrained_encoder(counterpart)
-            # idxs = torch.randperm(len(counterpart)).cuda()
-            # counterpart = torch.index_select(input_feat, 0, idxs)
-            # # original = self.pretrained_encoder(original)
-            # challenge = self.pretrained_encoder(challenge)
-            # # print(input_feat.shape, counterpart.shape)
-            # # exit()
-            # pos_sim1 = sim(input_feat, counterpart)
-            # class_sim = pos_sim1
-            # neg_sim1 = sim(input_feat, challenge)
-            # neg_sim2 = sim(counterpart2, challenge)
-            # neg_sim2 = sim(original, challenge)
-            # print(pos_sim1, pos_sim2, neg_sim1, neg_sim2)
-            # class_sim = torch.log((pos_sim1 + 1e-5) / (pos_sim1 + neg_sim1 + 1e-5))
-            # primary_sim = torch.log(pos_sim1 + 1e-5) * 10
-        
-            if selector == True: # selector score
-                return class_sim.mean() + torch.nn.ReLU()(1.0 + resp).mean() ## slack
-            else:
-                return resp, None, feat
+        out = out[index, y, :, :]
+        return out, feat
 
-    def calc_dis_fake_loss(self, input_fake):
-        resp_fake = self.forward(input_fake)
-        # print(resp_fake)
-        # print(resp_fake.shape)
+    def calc_dis_fake_loss(self, input_fake, input_label):
+        resp_fake, gan_feat = self.forward(input_fake, input_label)
         total_count = torch.tensor(np.prod(resp_fake.size()),
                                    dtype=torch.float).cuda()
-        # print(total_count)
-        # exit()
         fake_loss = torch.nn.ReLU()(1.0 + resp_fake).mean()
         correct_count = (resp_fake < 0).sum()
         fake_accuracy = correct_count.type_as(fake_loss) / total_count
         return fake_loss, fake_accuracy, resp_fake
 
-    def calc_dis_real_loss(self, input_real):
-        resp_real = self.forward(input_real)
+    def calc_dis_real_loss(self, input_real, input_label):
+        resp_real, gan_feat = self.forward(input_real, input_label)
         total_count = torch.tensor(np.prod(resp_real.size()),
                                    dtype=torch.float).cuda()
         real_loss = torch.nn.ReLU()(1.0 - resp_real).mean()
@@ -160,20 +86,14 @@ class GPPatchMcResDis(nn.Module):
         real_accuracy = correct_count.type_as(real_loss) / total_count
         return real_loss, real_accuracy, resp_real
 
-    def calc_gen_loss(self, input_fake, input_fake_label, counterpart, original, challenge):
-        resp_fake, class_sim, gan_feat = self.forward(input_fake, counterpart, original, challenge)
+    def calc_gen_loss(self, input_fake, input_fake_label):
+        resp_fake, gan_feat = self.forward(input_fake, input_fake_label)
         total_count = torch.tensor(np.prod(resp_fake.size()),
                                    dtype=torch.float).cuda()
-        # class_loss = -class_sim.mean()
+        loss = -resp_fake.mean()
         correct_count = (resp_fake >= 0).sum()
-        resp_fake = -resp_fake.mean()
-        loss = resp_fake # right class loss + adversarial loss
         accuracy = correct_count.type_as(loss) / total_count
-        # accuracy = loss
-        # print(-class_loss.mean(), (-resp_fake.mean()))
-        # exit()
-        
-        return resp_fake, None, accuracy, gan_feat
+        return loss, accuracy, gan_feat
 
     def calc_grad2(self, d_out, x_in):
         batch_size = x_in.size(0)
@@ -186,45 +106,6 @@ class GPPatchMcResDis(nn.Module):
         assert (grad_dout2.size() == x_in.size())
         reg = grad_dout2.sum()/batch_size
         return reg
-
-    def calc_contrast_loss(self, input_fake, content_label):
-        y_ = self.classifier(input_fake)[:, content_label[0].item()]
-        y_ = torch.tanh(y_) + 1.0
-        return y_.mean()
-
-
-class LearnableAffineTransformation(nn.Module):
-    def __init__(self, input_channels, output_channels):
-        super(LearnableAffineTransformation, self).__init__()
-        
-        # Define learnable parameters for the affine transformation
-        self.rotation = nn.Parameter(torch.full((1,), 0.), requires_grad=True)
-        self.translation = nn.Parameter(torch.full((2,), 0.), requires_grad=True)
-        self.scaling = nn.Parameter(torch.full((2,), 0.), requires_grad=True)
-        self.shearing = nn.Parameter(torch.full((2,), 0.), requires_grad=True)
-        
-    def forward(self, x):
-        batch_size, num_channels, height, width = x.size()
-        zero = torch.zeros(1).cuda()
-        one = torch.ones(1).cuda()
-        # Compute the batch of affine transformation matrices
-        last = [zero, zero, one]
-        rotation_matrix = torch.stack([torch.cos(self.rotation).reshape(1), -torch.sin(self.rotation).reshape(1),zero,
-                                     torch.sin(self.rotation).reshape(1), torch.cos(self.rotation).reshape(1), zero]+last).view(3, 3).cuda()
-        scaling_matrix = torch.stack([self.scaling[0].reshape(1), zero, zero, zero, self.scaling[1].reshape(1), zero]+last).view(3, 3).cuda()
-        shearing_matrix = torch.stack([one, self.shearing[0].reshape(1), zero, self.shearing[0].reshape(1), one, zero]+last).view(3, 3).cuda()
-        translation_matrix = torch.stack([torch.ones(1).cuda(), zero, self.translation[0].reshape(1), zero, one, self.translation[1].reshape(1)]+last).view(3, 3).cuda()
-        
-        affine_matrix = scaling_matrix @ shearing_matrix @ rotation_matrix @ translation_matrix
-        affine_matrix = affine_matrix[:2, :]
-        # Expand the batch of affine matrices
-        affine_matrix = affine_matrix.unsqueeze(0).expand(batch_size, -1, -1).cuda()
-        
-        # Apply the affine transformation to the input
-        grid = torch.nn.functional.affine_grid(affine_matrix, x.size())
-        x_transformed = torch.nn.functional.grid_sample(x, grid, align_corners = True)
-        
-        return x_transformed
 
 
 class FewShotGen(nn.Module):
@@ -267,32 +148,6 @@ class FewShotGen(nn.Module):
                        n_mlp_blks,
                        norm='none',
                        activ='relu')
-        # state_dict = torch.load('/home/nus/Documents/research/augment/code/FEAT/Traffic-Translator-Pre/0.05_0.1_[75, 150, 300]/checkpoint.pth')
-        # new_dict = {}
-        # for k in self.enc_content.state_dict().keys(): # repeated
-        #     new_k = k
-        #     if 'encoder.' in k:
-        #         new_k = 'encoder.' + k
-        #     new_dict[k] = state_dict[new_k]
-        # self.enc_content.load_state_dict(new_dict)
-        # self.attention = nn.Transformer(
-        #     d_model=256,
-        #     nhead=4,
-        #     num_encoder_layers=2,
-        #     dim_feedforward=256
-        # ).encoder
-        self.affine = LearnableAffineTransformation(3, 3).cuda()
-        
-
-        state_dict = torch.load('/home/nus/Documents/research/augment/code/FEAT/Traffic-Translator-Pre/0.05_0.1_[75, 150, 300]/checkpoint.pth')['state_dict']
-        new_dict = {}
-        for k in self.enc_content.state_dict().keys():
-            new_dict[k] = state_dict['encoder.' + k]
-        self.enc_content.load_state_dict(new_dict)
-        for params in self.enc_content.parameters():
-            params.requires_grad = False
-
-        self.erase = GaussianBlurLayer()
 
     def forward(self, one_image, model_set):
         # reconstruct an image
@@ -346,7 +201,7 @@ class ClassModelEncoder(nn.Module):
 
 
 class ContentEncoder(nn.Module):
-    def __init__(self, downs, n_res, input_dim, dim, norm, activ, pad_type, get_mean=False):
+    def __init__(self, downs, n_res, input_dim, dim, norm, activ, pad_type):
         super(ContentEncoder, self).__init__()
         self.model = []
         self.model += [Conv2dBlock(input_dim, dim, 7, 1, 3,
@@ -365,13 +220,15 @@ class ContentEncoder(nn.Module):
                                  pad_type=pad_type)]
         self.model = nn.Sequential(*self.model)
         self.output_dim = dim
-        self.get_mean = get_mean
+        state_dict = torch.load('/home/nus/Documents/research/augment/code/FEAT/Traffic-Translator-Pre/0.05_0.1_[75, 150, 300]/checkpoint.pth')['state_dict']
+        new_dict = {}
+        for k in self.model.state_dict().keys():
+            new_dict[k] = state_dict['encoder.model.' + k]
+        self.model.load_state_dict(new_dict)
+        # for params in self.model.parameters():
+        #     params.requires_grad = False
 
     def forward(self, x):
-        if self.get_mean == True:
-            x = self.model(x)
-            x = torch.mean(x, (2,3))
-            return x
         return self.model(x)
 
 
@@ -413,89 +270,4 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.model(x.view(x.size(0), -1))
-
-# class GaussianBlurLayer(nn.Module):
-#     def __init__(self, kernel_size=3, channels=1):
-#         super(GaussianBlurLayer, self).__init__()
-#         self.kernel_size = kernel_size
-#         self.channels = channels
-        
-#         # Learnable parameters for mean and log variance
-#         self.mean = nn.Parameter(torch.randn(1), requires_grad=True)
-#         self.log_var = nn.Parameter(torch.full((1,), 4.0), requires_grad=True)
-#         self.to_grayscale = transforms.Compose([transforms.Grayscale(num_output_channels=1)])
-
-#     def get_gaussian_kernel(self, kernel_size, mean, log_var, sigma=1.0):
-#         x = torch.arange(-kernel_size // 2 + 1, kernel_size // 2 + 1, dtype=torch.float32).cuda()
-#         std = torch.exp(0.5 * log_var)
-#         kernel = torch.exp(-0.5 * ((x - mean) / (sigma * std))**2)
-#         kernel = kernel / kernel.sum()
-#         return kernel
-
-#     def forward(self, x):
-#         x = self.to_grayscale(x)
-#         print(x.shape)
-        
-#         # Get the Gaussian kernel based on the mean and log variance
-#         gaussian_kernel = self.get_gaussian_kernel(self.kernel_size, self.mean, self.log_var)
-        
-#         # Apply Gaussian blur using the learned kernel
-#         blurred = F.conv2d(x, gaussian_kernel.view(1, 1, -1, 1), padding=(self.kernel_size // 2, self.kernel_size // 2))
-#         print(blurred.shape)
-#         exit()
-
-#         blurred = blurred.repeat(1, 3, 1, 1)
-#         return blurred
-
-class GaussianBlurLayer(nn.Module):
-    def __init__(self, kernel_size=19, channels=1):
-        super(GaussianBlurLayer, self).__init__()
-        self.kernel_size = kernel_size
-        self.channels = channels
-        
-        # Learnable parameters for mean and log variance for each channel
-        # self.mean = nn.Parameter(torch.randn(channels), requires_grad=True)
-        # self.variance = nn.Parameter(torch.full((1,), 0.1), requires_grad=True)
-        self.to_grayscale = transforms.Compose([transforms.Grayscale(num_output_channels=1)])
-        # gaussian_dist = dist.Normal(0, 1)
-        # self.weights = gaussian_dist.sample((kernel_size,)).cuda()
-        # self.weights = torch.cat(self.weights.sort())
-        # self.weights += torch.abs(self.weights[0]) + 1.0
-
-    def get_gaussian_kernel(self, kernel_size):
-        # self.weights *= self.variance[0].item()
-        # weights = self.weights
-
-        gaussian_dist = dist.Normal(0, 1)
-        weights = gaussian_dist.sample((kernel_size,)).cuda()
-        weights = torch.cat(weights.sort())
-        weights += abs(weights[0].item())
-        # weights[weights > 200] = 200
-        # weights[weights < 0] = 0
-        
-        kernel_weights = torch.empty(kernel_size, kernel_size).cuda()
-        for i in range(0, math.ceil(kernel_size / 2)):
-            kernel_weights[i, i:kernel_size-i] = weights[i]
-            kernel_weights[kernel_size - i - 1, i:kernel_size-i] = weights[i]
-            for j in range(i + 1, kernel_size - i):
-                kernel_weights[j, i] = weights[i]
-                kernel_weights[j, kernel_size-i-1] = weights[i]
-        # kernel_weights = kernel_weights.repeat
-        # kernel_weights = torch.full((kernel_size, kernel_size), 1.0).cuda()
-        # print(kernel_weights)
-        # exit()
-        return kernel_weights
-
-    def forward(self, x):
-        x = self.to_grayscale(x)
-        # Get the Gaussian kernel based on the mean and log variance
-        kernel_weights = self.get_gaussian_kernel(self.kernel_size)
-        
-        # # Calculate padding to keep the input and output sizes the same
-        # padding = self.kernel_size // 2
-
-        # Apply Gaussian blur using the learned kernel
-        blurred = F.conv2d(x, kernel_weights.unsqueeze(0).unsqueeze(0), padding=(self.kernel_size // 2, self.kernel_size // 2))
-        blurred = blurred.repeat(1, 3, 1, 1)
-
-        return blurred
+    

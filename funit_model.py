@@ -9,7 +9,6 @@ import torch
 import torch.nn as nn
 
 from model.FUNIT.networks import FewShotGen, GPPatchMcResDis
-from model.FUNIT.utils import get_dichomy_loader, kl_divergence, sim
 
 def recon_criterion(predict, target):
     return torch.mean(torch.abs(predict - target))
@@ -21,141 +20,52 @@ class FUNITModel(nn.Module):
         self.gen = FewShotGen(hp['gen'])
         self.dis = GPPatchMcResDis(hp['dis'])
         self.gen_test = copy.deepcopy(self.gen)
-        self.train_loader = get_dichomy_loader(
-            episodes=hp['max_iter'],
-            root=hp['data_folder_train'],
-            file_list=hp['data_list_train'],
-            batch_size=1,
-            new_size=hp['new_size'],
-            height=hp['crop_image_height'],
-            width=hp['crop_image_width'],
-            crop=True,
-            num_workers=1,
-            n_cls=hp['pool_size'])
-        self.step = 0
-
-
-    def forward(self, co_data, cl_data, cn_data, hp, mode):
+        
+    def forward(self, co_data, cl_data, hp, mode):
         xa = co_data[0].cuda()
         la = co_data[1].cuda()
         xb = cl_data[0].cuda()
         lb = cl_data[1].cuda()
-        xn = cn_data.cuda()
         if mode == 'gen_update':
-            # blur_xa = self.gen.erase(xa)
-            # blur_xb = self.gen.erase(xb)
-            # c_xa = self.gen.enc_content(blur_xa)
-            # c_xa = self.gen.enc_content(xa)
-            # c_xb = self.gen.enc_content(xb)
-            # c_xn = self.gen.enc_content(xn)
-            # s_xa = self.gen.enc_class_model(xa)
-            # s_xb = self.gen.enc_class_model(xb)
-            # s_xn = self.gen.enc_class_model(xn)
-            # c_xa_feature = c_xa.flatten(start_dim=2, end_dim=-1)
-            # c_xb_feature = c_xb
-            # combined_features = 1 * c_xa_feature
-            translated_out = self.gen.affine(xa)
-            # translated_out = translated_out.reshape(c_xa.shape)
-
-            # xt = self.gen.decode(translated_out, s_xa) # generation
-            # # xr = self.gen.decode(clear_xa, s_xa)  # pose reconstruction
-            # xb_r = self.gen.decode(c_xb, s_xb)
-            # xn_r = self.gen.decode(c_xn, s_xn)
-            # # proto_sim_set = sim(c_xa.mean((2,3)), prototype_emb.mean((1,2)))# batch, emb x 1, emb -> batch, 1
-            # # print(proto_sim_set)
-            # # exit()
-            # # max, max_i = torch.max(proto_sim_set)
-            # # xp2 = xa[max_i[0].item(), :, :, :].repeat(len(c_xn), 1, 1, 1)
-            # l_adv_t, class_loss,\
-            #       gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb, \
-            #     counterpart=xb_r.detach(), original=None, challenge=xn_r.detach())
-            # # sim_r, l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la, counterpart=xr.detach(), original=xb.detach(), challenge=xn.detach())
-            # l_contrast = self.dis.calc_contrast_loss(xt, lb) * 0.1
-
-
-            # idxs = torch.randperm(len(c_xb)).cuda()
-            # counterpart = torch.index_select(c_xb, 0, idxs)
-            # class_loss = -torch.log(sim(translated_out.mean((2,3)).detach(), \
-            #                              counterpart.mean((2,3)).detach())).mean()
-            # class_loss2 = sim(translated_out.mean((2,3)).detach(), \
-            #                              c_xn.mean((2,3)).detach()).mean() * 0.5
-            # # print(l_contrast.shape)
-            # # _, _, xb_gan_feat = self.dis(xb)
-            # # _, _, xa_gan_feat = self.dis(xa)
-            # prototype_emb = c_xb_feature.mean(0).repeat(32, 1, 1, 1)# 512, 16, 16
-            # # print(translated_out.shape, prototype_emb.shape)
-            # exit()
-            # kl_loss = kl_divergence(translated_out.mean((2,3)),
-            #                           prototype_emb.mean((2,3))) * 500
-            # l_sim = -torch.log(sim(translated_out, prototype_emb) + 1e-5)
-            # l_sim = l_sim.mean()
-            # l_m_rec = recon_criterion(xt_gan_feat,
-            #                           xb_gan_feat)
-            # l_c_rec = recon_criterion(c_xa,
-            #                           xa_ground_truth)
-            # l_m_rec = recon_criterion(c_xa,
-            #                           xb_ground_truth)
-            # l_x_rec = (recon_criterion(xn_r, xn) + recon_criterion(xb_r, xb)) * 1
-            # l_x_rec += recon_criterion(xt, xa) * 1
-            # acc = gacc_t
-            # # l_contrast *= 1
-            # # l_adv_t *= 1
-            
-            # if self.step % 200 == 0:
-            #     print('recon', l_x_rec, 'kl_loss', kl_loss,\
-            #           'class_l', class_loss, 'contrast_l', l_contrast, 'class_loss2', class_loss2)
-            # self.step += 1
-            # l_total = l_x_rec + kl_loss + l_adv_t + class_loss + l_contrast + class_loss2
-
-            l_total = recon_criterion(translated_out, xb.mean(0))
-            l_total += recon_criterion(translated_out, xa) * 0.5
-            if self.step % 20 == 0:
-                print(l_total)
-            # l_total = (hp['gan_w'] * (class_loss + target_l + l_x_rec)+ hp[
-            #     'gan_w'] * (l_contrast + l_adv_t))
-            # l_total = (hp['gan_w'] * (l_contrast + l_adv_t + class_loss + l_x_rec))
+            c_xa = self.gen.enc_content(xa)
+            s_xa = self.gen.enc_class_model(xa)
+            s_xb = self.gen.enc_class_model(xb)
+            xt = self.gen.decode(c_xa, s_xb)  # translation
+            xr = self.gen.decode(c_xa, s_xa)  # reconstruction
+            l_adv_t, gacc_t, xt_gan_feat = self.dis.calc_gen_loss(xt, lb)
+            l_adv_r, gacc_r, xr_gan_feat = self.dis.calc_gen_loss(xr, la)
+            _, xb_gan_feat = self.dis(xb, lb)
+            _, xa_gan_feat = self.dis(xa, la)
+            l_c_rec = recon_criterion(xr_gan_feat.mean(3).mean(2),
+                                      xa_gan_feat.mean(3).mean(2))
+            l_m_rec = recon_criterion(xt_gan_feat.mean(3).mean(2),
+                                      xb_gan_feat.mean(3).mean(2))
+            l_x_rec = recon_criterion(xr, xa)
+            l_adv = 0.5 * (l_adv_t + l_adv_r)
+            acc = 0.5 * (gacc_t + gacc_r)
+            l_total = (hp['gan_w'] * l_adv + hp['r_w'] * l_x_rec + hp[
+                'fm_w'] * (l_c_rec + l_m_rec))
             l_total.backward()
-            return l_total, l_total, l_total, l_total, l_total, l_total
-            # return l_total, l_x_rec, kl_loss, class_loss, l_adv_t, acc ## slack
+            return l_total, l_adv, l_x_rec, l_c_rec, l_m_rec, acc
         elif mode == 'dis_update':
             xb.requires_grad_()
-            l_real_pre, acc_r, resp_r = self.dis.calc_dis_real_loss(xb)
+            l_real_pre, acc_r, resp_r = self.dis.calc_dis_real_loss(xb, lb)
             l_real = hp['gan_w'] * l_real_pre
-            # l_real *= 1
             l_real.backward(retain_graph=True)
             l_reg_pre = self.dis.calc_grad2(resp_r, xb)
-            l_reg = 1 * l_reg_pre # 10 *
+            l_reg = 10 * l_reg_pre
             l_reg.backward()
             with torch.no_grad():
-                xa = self.gen.erase(xa)
                 c_xa = self.gen.enc_content(xa)
-                c_xb = self.gen.enc_content(xb)
-                c_xa = 1 * c_xa + (1 - 1) * c_xb
-                s_xa = self.gen.enc_class_model(xa)
-                translated_out = c_xa.flatten(start_dim=2, end_dim=-1)
-                translated_out = self.gen.affine(translated_out)
-                translated_out = translated_out.reshape(c_xa.shape)
-                xt = self.gen.decode(translated_out, s_xa)
-            l_fake_p, acc_f, resp_f = self.dis.calc_dis_fake_loss(xt.detach())
+                s_xb = self.gen.enc_class_model(xb)
+                xt = self.gen.decode(c_xa, s_xb)
+            l_fake_p, acc_f, resp_f = self.dis.calc_dis_fake_loss(xt.detach(),
+                                                                  lb)
             l_fake = hp['gan_w'] * l_fake_p
-            if self.step % 20 == 0:
-                print(l_fake, 'fake', l_real, 'real')
             l_fake.backward()
             l_total = l_fake + l_real + l_reg
-            acc = 1 * (acc_f + acc_r)
+            acc = 0.5 * (acc_f + acc_r)
             return l_total, l_fake_p, l_real_pre, l_reg_pre, acc
-        elif mode == 'picker_update':
-            _, _, qry_features = self.dis(cl_data) # batch, q, feature_size
-            _, _, nb_features = self.dis(co_data) # qries and nbs are of different classes
-            matrix_forward = torch.bmm(qry_features, nb_features.transpose(2,1)) # q qries, n neighbors
-            matrix_reverse = torch.bmm(nb_features, qry_features.transpose(2,1))
-            scores_forward = self.get_score(qry = cl_data, nb = co_data, cn_data = xn)
-            scores_reverse = self.get_score(qry = co_data, nb = cl_data, cn_data = xn)
-            loss_forward = recon_criterion(matrix_forward, scores_forward)
-            loss_reverse = recon_criterion(matrix_reverse, scores_reverse)
-            loss = loss_forward + loss_reverse
-            loss.backward()
-            return loss
         else:
             assert 0, 'Not support operation'
 
@@ -165,26 +75,18 @@ class FUNITModel(nn.Module):
         self.gen_test.eval()
         xa = co_data[0].cuda()
         xb = cl_data[0].cuda()
-        # c_xa = self.gen.enc_content(xa)
-        # c_xb = self.gen.enc_content(xb)
-        # c_xa_current = 1 * c_xa + (1 - 1) * c_xb
-        # s_xa_current = self.gen.enc_class_model(xa)
-        # s_xb_current = self.gen.enc_class_model(xb)
-        # translated_out = c_xa_current.flatten(start_dim=2, end_dim=-1)
-        # translated_out = self.gen.affine(translated_out)
-        # translated_out = translated_out.reshape(c_xa_current.shape)
-        # xt_current = self.gen.decode(translated_out, s_xb_current)
-        # xr_current = self.gen.decode(c_xa, s_xa_current)
-        translated_out = self.gen.affine(xa)
-        # c_xa = self.gen_test.enc_content(xa)
-        # s_xa = self.gen_test.enc_class_model(xa)
-        # translated_out = c_xa.flatten(start_dim=2, end_dim=-1)
-        # translated_out = self.gen_test.affine(translated_out)
-        # translated_out = translated_out.reshape(c_xa_current.shape)
-        # xt = self.gen_test.decode(translated_out, s_xa)
-        # xr = self.gen_test.decode(c_xa, s_xa)
+        c_xa_current = self.gen.enc_content(xa)
+        s_xa_current = self.gen.enc_class_model(xa)
+        s_xb_current = self.gen.enc_class_model(xb)
+        xt_current = self.gen.decode(c_xa_current, s_xb_current)
+        xr_current = self.gen.decode(c_xa_current, s_xa_current)
+        c_xa = self.gen_test.enc_content(xa)
+        s_xa = self.gen_test.enc_class_model(xa)
+        s_xb = self.gen_test.enc_class_model(xb)
+        xt = self.gen_test.decode(c_xa, s_xb)
+        xr = self.gen_test.decode(c_xa, s_xa)
         self.train()
-        return xa, translated_out, xb#, xr_current, xt_current
+        return xa, xr_current, xt_current, xb, xr, xt
 
     def translate_k_shot(self, co_data, cl_data, k):
         self.eval()

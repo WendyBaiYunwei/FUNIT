@@ -6,13 +6,11 @@ Licensed under the CC BY-NC-SA 4.0 license
 import os
 import yaml
 import time
-import numpy as np
 
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 import torchvision.utils as vutils
-import torch.nn.functional as F
 
 from model.FUNIT.data import ImageLabelFilelist
 
@@ -39,10 +37,18 @@ def loader_from_list(
         center_crop=False,
         return_paths=False,
         drop_last=True):
-
-    transform_list = [transforms.Resize(new_size), transforms.CenterCrop((height, width)), \
-            transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-
+    transform_list = [transforms.ToTensor(),
+                      transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    if center_crop:
+        transform_list = [transforms.CenterCrop((height, width))] + \
+                         transform_list if crop else transform_list
+    else:
+        transform_list = [transforms.RandomCrop((height, width))] + \
+                         transform_list if crop else transform_list
+    transform_list = [transforms.Resize(new_size)] + transform_list \
+        if new_size is not None else transform_list
+    if not center_crop:
+        transform_list = [transforms.RandomHorizontalFlip()] + transform_list
     transform = transforms.Compose(transform_list)
     dataset = ImageLabelFilelist(root,
                                  file_list,
@@ -53,80 +59,43 @@ def loader_from_list(
                         shuffle=shuffle,
                         drop_last=drop_last,
                         num_workers=num_workers)
-
     return loader
 
-def get_dichomy_loader(
-        episodes,
-        root,
-        file_list,
-        batch_size,
-        new_size=None,
-        height=128,
-        width=128,
-        crop=True,
-        num_workers=4,
-        shuffle=True,
-        center_crop=False,
-        return_paths=False,
-        drop_last=True,
-        n_cls=3):
 
-    transform_list = [transforms.Resize(new_size), transforms.CenterCrop((height, width)), \
-            transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+def get_evaluation_loaders(conf, shuffle_content=False):
+    batch_size = conf['batch_size']
+    num_workers = conf['num_workers']
+    new_size = conf['new_size']
+    width = conf['crop_image_width']
+    height = conf['crop_image_height']
+    content_loader = loader_from_list(
+            root=conf['data_folder_train'],
+            file_list=conf['data_list_train'],
+            batch_size=batch_size,
+            new_size=new_size,
+            height=height,
+            width=width,
+            crop=True,
+            num_workers=num_workers,
+            shuffle=shuffle_content,
+            center_crop=True,
+            return_paths=True,
+            drop_last=False)
 
-    transform = transforms.Compose(transform_list)
-    dataset = ImageLabelFilelist(root,
-                                 file_list,
-                                 transform,
-                                 return_paths=return_paths)
-
-    train_sampler = CategoriesSampler(dataset.labels,
-                                    n_batch=episodes,
-                                    n_cls=n_cls,
-                                    n_per=batch_size)
-
-    loader = DataLoader(dataset=dataset,
-                        num_workers=num_workers,
-                        batch_sampler=train_sampler,
-                        pin_memory=True)
-
-    return loader
-
-# def get_evaluation_loaders(conf, shuffle_content=False):
-#     batch_size = conf['batch_size']
-#     num_workers = conf['num_workers']
-#     new_size = conf['new_size']
-#     width = conf['crop_image_width']
-#     height = conf['crop_image_height']
-#     content_loader = loader_from_list(
-#             root=conf['data_folder_train'],
-#             file_list=conf['data_list_train'],
-#             batch_size=batch_size,
-#             new_size=new_size,
-#             height=height,
-#             width=width,
-#             crop=True,
-#             num_workers=num_workers,
-#             shuffle=shuffle_content,
-#             center_crop=True,
-#             return_paths=True,
-#             drop_last=False)
-
-#     class_loader = loader_from_list(
-#             root=conf['data_folder_test'],
-#             file_list=conf['data_list_test'],
-#             batch_size=batch_size * conf['k_shot'],
-#             new_size=new_size,
-#             height=height,
-#             width=width,
-#             crop=True,
-#             num_workers=1,
-#             shuffle=False,
-#             center_crop=True,
-#             return_paths=True,
-#             drop_last=False)
-#     return content_loader, class_loader
+    class_loader = loader_from_list(
+            root=conf['data_folder_test'],
+            file_list=conf['data_list_test'],
+            batch_size=batch_size * conf['k_shot'],
+            new_size=new_size,
+            height=height,
+            width=width,
+            crop=True,
+            num_workers=1,
+            shuffle=False,
+            center_crop=True,
+            return_paths=True,
+            drop_last=False)
+    return content_loader, class_loader
 
 
 def get_train_loaders(conf):
@@ -135,9 +104,7 @@ def get_train_loaders(conf):
     new_size = conf['new_size']
     width = conf['crop_image_width']
     height = conf['crop_image_height']
-
-    train_loader = get_dichomy_loader(
-            episodes=conf['max_iter'],
+    train_content_loader = loader_from_list(
             root=conf['data_folder_train'],
             file_list=conf['data_list_train'],
             batch_size=batch_size,
@@ -145,25 +112,19 @@ def get_train_loaders(conf):
             height=height,
             width=width,
             crop=True,
-            num_workers=1,
-            n_cls=conf['train_way_size'],
-            return_paths=False)
-
-    test_loader = get_dichomy_loader(
-            episodes=conf['max_iter'],
+            num_workers=num_workers)
+    train_class_loader = loader_from_list(
+            root=conf['data_folder_train'],
+            file_list=conf['data_list_train'],
+            batch_size=batch_size,
+            new_size=new_size,
+            height=height,
+            width=width,
+            crop=True,
+            num_workers=num_workers)
+    test_content_loader = loader_from_list(
             root=conf['data_folder_test'],
             file_list=conf['data_list_test'],
-            batch_size=batch_size,
-            new_size=new_size,
-            height=height,
-            width=width,
-            crop=True,
-            num_workers=1,
-            n_cls=conf['train_way_size'])
-
-    test_content_loader = loader_from_list(
-            root=conf['data_folder_train'],
-            file_list=conf['data_list_train'],
             batch_size=batch_size,
             new_size=new_size,
             height=height,
@@ -180,27 +141,9 @@ def get_train_loaders(conf):
             crop=True,
             num_workers=1)
 
-    return (train_loader, test_loader, test_content_loader, test_class_loader)
+    return (train_content_loader, train_class_loader, test_content_loader,
+            test_class_loader)
 
-def get_pretrain_loaders(conf):
-    batch_size = conf['batch_size']
-    num_workers = conf['num_workers']
-    new_size = conf['new_size']
-    width = conf['crop_image_width']
-    height = conf['crop_image_height']
-
-    train_loader = loader_from_list(
-            root=conf['data_folder_train'],
-            file_list=conf['data_list_train'],
-            batch_size=batch_size,
-            new_size=new_size,
-            height=height,
-            width=width,
-            crop=True,
-            shuffle=True,
-            num_workers=1)
-
-    return train_loader
 
 def get_config(config):
     with open(config, 'r') as stream:
@@ -275,21 +218,6 @@ def write_loss(iterations, trainer, train_writer):
     for m in members:
         train_writer.add_scalar(m, getattr(trainer, m), iterations + 1)
 
-def sim(a, b):
-    normed_cos = (F.cosine_similarity(a, b, dim=1) + 1) / 2 + 1e-4
-    # cosine_sim = torch.tanh((normed_cos - 0.6) * 2)
-    return normed_cos
-
-
-def kl_divergence(p, q):
-    # Ensure that p and q are both probability distributions (i.e., they sum to 1)
-    p = torch.nn.functional.softmax(p, dim=1)
-    q = torch.nn.functional.softmax(q, dim=1)
-    
-    # Compute KL divergence
-    kl = torch.sum(p * (torch.log(p) - torch.log(q)))
-    
-    return kl
 
 class Timer:
     def __init__(self, msg):
@@ -301,52 +229,3 @@ class Timer:
 
     def __exit__(self, exc_type, exc_value, exc_tb):
         print(self.msg % (time.time() - self.start_time))
-
-class CategoriesSampler():
-    def __init__(self, label, n_batch, n_cls, n_per):
-        self.n_batch = n_batch
-        self.n_cls = n_cls
-        self.n_per = n_per
-
-        label = np.array(label)
-        self.class2ind = []
-        for i in range(max(label) + 1):
-            ind = np.argwhere(label == i).reshape(-1)
-            ind = torch.from_numpy(ind)
-            self.class2ind.append(ind)
-        # print(self.class2ind)
-        # exit()
-    def __len__(self):
-            return self.n_batch
-
-    def __iter__(self):
-        for i_batch in range(self.n_batch):
-            batch = []
-            classes = torch.randperm(len(self.class2ind))[:self.n_cls]
-            for c in classes:
-                class_labels = self.class2ind[c]
-                pos = torch.randperm(len(class_labels))[:self.n_per]
-                batch.append(class_labels[pos])
-            # try:
-            returned_batch = torch.stack(batch).t().reshape(-1)
-            yield returned_batch
-            # except:
-            #     print(classes, batch)
-            #     yield (classes, batch, '')
-                
-
-def reorganize_data(data):
-    img = data[0]
-    series = torch.arange(data[0].shape[0])
-    idx1 = series % 3 == 0
-    idx2 = series % 3 == 1
-    idx3 = series % 3 == 2
-    co_img = img[idx1, :, :, :]
-    cl_img = img[idx2, :, :, :]
-    cn_img = img[idx3, :, :, :] # negative image
-    labels = data[1]
-    co_y = labels[idx1]
-    cl_y = labels[idx2]
-    co_data = (co_img, co_y)
-    cl_data = (cl_img, cl_y)
-    return co_data, cl_data, cn_img
