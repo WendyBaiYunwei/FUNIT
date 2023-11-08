@@ -88,7 +88,7 @@ class FUNIT_Trainer(nn.Module):
         state_dict = torch.load(last_model_name)
         this_model.gen.load_state_dict(state_dict['gen'])
         this_model.gen_test.load_state_dict(state_dict['gen_test'])
-        iterations = int(last_model_name[-11:-3])
+        # iterations = int(last_model_name[-11:-3])
 
         last_model_name = get_model_list(checkpoint_dir, "dis")
         state_dict = torch.load(last_model_name)
@@ -98,6 +98,7 @@ class FUNIT_Trainer(nn.Module):
         self.dis_opt.load_state_dict(state_dict['dis'])
         self.gen_opt.load_state_dict(state_dict['gen'])
 
+        iterations = 0
         self.dis_scheduler = get_scheduler(self.dis_opt, hp, iterations)
         self.gen_scheduler = get_scheduler(self.gen_opt, hp, iterations)
         print('Resume from iteration %d' % iterations)
@@ -106,8 +107,8 @@ class FUNIT_Trainer(nn.Module):
     def save(self, snapshot_dir, iterations, multigpus):
         this_model = self.model.module if multigpus else self.model
         # Save generators, discriminators, and optimizers
-        gen_name = os.path.join(snapshot_dir, 'gen_9%08d.pt' % (iterations + 1))
-        dis_name = os.path.join(snapshot_dir, 'dis_9%08d.pt' % (iterations + 1))
+        gen_name = os.path.join(snapshot_dir, 'gen_9zzz.pt')
+        dis_name = os.path.join(snapshot_dir, 'dis_9zzz.pt')
         # gen_name = os.path.join(snapshot_dir, 'gen_99999999.pt')
         # dis_name = os.path.join(snapshot_dir, 'dis_99999999.pt')
         opt_name = os.path.join(snapshot_dir, 'optimizer.pt')

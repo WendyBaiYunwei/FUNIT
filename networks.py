@@ -58,7 +58,7 @@ class GPPatchMcResDis(nn.Module):
         nf_out = np.min([nf * 2, 1024])
         cnn_f += [ActFirstResBlock(nf, nf, None, 'lrelu', 'none')]
         cnn_f += [ActFirstResBlock(nf, nf_out, None, 'lrelu', 'none')]
-        cnn_c = [Conv2dBlock(nf_out, 1, 1, 1, #hp['num_classes']
+        cnn_c = [Conv2dBlock(nf_out, 10, 1, 1, #hp['num_classes']
                              norm='none',
                              activation='lrelu',
                              activation_first=True)]
@@ -72,7 +72,7 @@ class GPPatchMcResDis(nn.Module):
                                     activ='relu',
                                     pad_type='reflect',
                                     get_mean=True),
-                                    nn.Linear(512, hp['num_classes']))
+                                    nn.Linear(512, 61))
         state_dict = torch.load('/home/nus/Documents/research/augment/code/FEAT/Traffic-Translator-Pre/0.05_0.1_[75, 150, 300]/checkpoint.pth')['state_dict']
         new_dict = {}
         for k in self.classifier.state_dict().keys():
@@ -94,7 +94,7 @@ class GPPatchMcResDis(nn.Module):
             activ='relu',
             pad_type='reflect',
             get_mean=True),
-            nn.Linear(512, hp['num_classes']))
+            nn.Linear(512, 61))
         new_dict = {}
         for k in self.pretrained_encoder.state_dict().keys():
             new_k = '.'.join(k.split('.')[1:])
@@ -112,28 +112,31 @@ class GPPatchMcResDis(nn.Module):
         feat = self.cnn_f(x)
         out = self.cnn_c(feat)
         index = torch.LongTensor(range(out.size(0))).cuda()
-        resp = torch.tanh(out[index, 0, :, :])
+        resp = torch.tanh(out[index, :, :, :]).mean((1,2,3))
         if counterpart == None: # return feature and disc output only
             return resp
         else:
-            input_feat = self.pretrained_encoder(x)
-            counterpart = self.pretrained_encoder(counterpart)
-            idxs = torch.randperm(len(counterpart)).cuda()
-            counterpart = torch.index_select(counterpart, 0, idxs)
-            original = self.pretrained_encoder(original)
-            challenge = self.pretrained_encoder(challenge)
-            pos_sim1 = sim(input_feat, counterpart)
-            neg_sim1 = sim(counterpart, challenge)
+            # input_feat = self.pretrained_encoder(x)
+            # counterpart = self.pretrained_encoder(counterpart)
+            # idxs = torch.randperm(len(counterpart)).cuda()
+            # counterpart = torch.index_select(input_feat, 0, idxs)
+            # # original = self.pretrained_encoder(original)
+            # challenge = self.pretrained_encoder(challenge)
+            # # print(input_feat.shape, counterpart.shape)
+            # # exit()
+            # pos_sim1 = sim(input_feat, counterpart)
+            # class_sim = pos_sim1
+            # neg_sim1 = sim(input_feat, challenge)
             # neg_sim2 = sim(counterpart2, challenge)
-            neg_sim2 = sim(original, challenge)
+            # neg_sim2 = sim(original, challenge)
             # print(pos_sim1, pos_sim2, neg_sim1, neg_sim2)
-            new_out = torch.log((pos_sim1 + 1e-5) / (pos_sim1 + neg_sim1 + neg_sim2 + 1e-5))
-            primary_sim = torch.log(pos_sim1 + 1e-5) * 10
+            # class_sim = torch.log((pos_sim1 + 1e-5) / (pos_sim1 + neg_sim1 + 1e-5))
+            # primary_sim = torch.log(pos_sim1 + 1e-5) * 10
         
             if selector == True: # selector score
-                return new_out.mean() + primary_sim.mean() + torch.nn.ReLU()(1.0 + resp).mean()
+                return class_sim.mean() + torch.nn.ReLU()(1.0 + resp).mean() ## slack
             else:
-                return resp, new_out, primary_sim, feat
+                return resp, None, feat
 
     def calc_dis_fake_loss(self, input_fake):
         resp_fake = self.forward(input_fake)
@@ -158,19 +161,19 @@ class GPPatchMcResDis(nn.Module):
         return real_loss, real_accuracy, resp_real
 
     def calc_gen_loss(self, input_fake, input_fake_label, counterpart, original, challenge):
-        resp_fake, sim_score, prim_sim_loss, gan_feat = self.forward(input_fake, counterpart, original, challenge)
+        resp_fake, class_sim, gan_feat = self.forward(input_fake, counterpart, original, challenge)
         total_count = torch.tensor(np.prod(resp_fake.size()),
                                    dtype=torch.float).cuda()
-        sim_score = -sim_score.mean()
-        resp_fake = -resp_fake.mean()
-        prim_sim_loss = -prim_sim_loss.mean()
-        loss = sim_score + resp_fake # right class loss + adversarial loss
+        # class_loss = -class_sim.mean()
         correct_count = (resp_fake >= 0).sum()
+        resp_fake = -resp_fake.mean()
+        loss = resp_fake # right class loss + adversarial loss
         accuracy = correct_count.type_as(loss) / total_count
         # accuracy = loss
-        # print(-sim_score.mean(), (-resp_fake.mean()))
+        # print(-class_loss.mean(), (-resp_fake.mean()))
         # exit()
-        return sim_score, resp_fake, prim_sim_loss, accuracy, gan_feat
+        
+        return resp_fake, None, accuracy, gan_feat
 
     def calc_grad2(self, d_out, x_in):
         batch_size = x_in.size(0)
@@ -188,7 +191,42 @@ class GPPatchMcResDis(nn.Module):
         y_ = self.classifier(input_fake)[:, content_label[0].item()]
         y_ = torch.tanh(y_) + 1.0
         return y_.mean()
-    
+
+
+class LearnableAffineTransformation(nn.Module):
+    def __init__(self, input_channels, output_channels):
+        super(LearnableAffineTransformation, self).__init__()
+        
+        # Define learnable parameters for the affine transformation
+        self.rotation = nn.Parameter(torch.full((1,), 0.), requires_grad=True)
+        self.translation = nn.Parameter(torch.full((2,), 0.), requires_grad=True)
+        self.scaling = nn.Parameter(torch.full((2,), 0.), requires_grad=True)
+        self.shearing = nn.Parameter(torch.full((2,), 0.), requires_grad=True)
+        
+    def forward(self, x):
+        batch_size, num_channels, height, width = x.size()
+        zero = torch.zeros(1).cuda()
+        one = torch.ones(1).cuda()
+        # Compute the batch of affine transformation matrices
+        last = [zero, zero, one]
+        rotation_matrix = torch.stack([torch.cos(self.rotation).reshape(1), -torch.sin(self.rotation).reshape(1),zero,
+                                     torch.sin(self.rotation).reshape(1), torch.cos(self.rotation).reshape(1), zero]+last).view(3, 3).cuda()
+        scaling_matrix = torch.stack([self.scaling[0].reshape(1), zero, zero, zero, self.scaling[1].reshape(1), zero]+last).view(3, 3).cuda()
+        shearing_matrix = torch.stack([one, self.shearing[0].reshape(1), zero, self.shearing[0].reshape(1), one, zero]+last).view(3, 3).cuda()
+        translation_matrix = torch.stack([torch.ones(1).cuda(), zero, self.translation[0].reshape(1), zero, one, self.translation[1].reshape(1)]+last).view(3, 3).cuda()
+        
+        affine_matrix = scaling_matrix @ shearing_matrix @ rotation_matrix @ translation_matrix
+        affine_matrix = affine_matrix[:2, :]
+        # Expand the batch of affine matrices
+        affine_matrix = affine_matrix.unsqueeze(0).expand(batch_size, -1, -1).cuda()
+        
+        # Apply the affine transformation to the input
+        grid = torch.nn.functional.affine_grid(affine_matrix, x.size())
+        x_transformed = torch.nn.functional.grid_sample(x, grid, align_corners = True)
+        
+        return x_transformed
+
+
 class FewShotGen(nn.Module):
     def __init__(self, hp):
         super(FewShotGen, self).__init__()
@@ -243,12 +281,18 @@ class FewShotGen(nn.Module):
         #     num_encoder_layers=2,
         #     dim_feedforward=256
         # ).encoder
+        self.affine = LearnableAffineTransformation(3, 3).cuda()
+        
 
         state_dict = torch.load('/home/nus/Documents/research/augment/code/FEAT/Traffic-Translator-Pre/0.05_0.1_[75, 150, 300]/checkpoint.pth')['state_dict']
         new_dict = {}
         for k in self.enc_content.state_dict().keys():
             new_dict[k] = state_dict['encoder.' + k]
         self.enc_content.load_state_dict(new_dict)
+        for params in self.enc_content.parameters():
+            params.requires_grad = False
+
+        self.erase = GaussianBlurLayer()
 
     def forward(self, one_image, model_set):
         # reconstruct an image
@@ -404,14 +448,14 @@ class MLP(nn.Module):
 #         return blurred
 
 class GaussianBlurLayer(nn.Module):
-    def __init__(self, kernel_size=3, channels=1):
+    def __init__(self, kernel_size=19, channels=1):
         super(GaussianBlurLayer, self).__init__()
         self.kernel_size = kernel_size
         self.channels = channels
         
         # Learnable parameters for mean and log variance for each channel
         # self.mean = nn.Parameter(torch.randn(channels), requires_grad=True)
-        self.variance = nn.Parameter(torch.full((1,), 0.1), requires_grad=True)
+        # self.variance = nn.Parameter(torch.full((1,), 0.1), requires_grad=True)
         self.to_grayscale = transforms.Compose([transforms.Grayscale(num_output_channels=1)])
         # gaussian_dist = dist.Normal(0, 1)
         # self.weights = gaussian_dist.sample((kernel_size,)).cuda()
@@ -422,21 +466,24 @@ class GaussianBlurLayer(nn.Module):
         # self.weights *= self.variance[0].item()
         # weights = self.weights
 
-        # gaussian_dist = dist.Normal(100, self.variance)
-        # weights = gaussian_dist.sample((kernel_size,)).cuda()
-        # weights = torch.cat(weights.sort())
+        gaussian_dist = dist.Normal(0, 1)
+        weights = gaussian_dist.sample((kernel_size,)).cuda()
+        weights = torch.cat(weights.sort())
+        weights += abs(weights[0].item())
         # weights[weights > 200] = 200
         # weights[weights < 0] = 0
         
-        # kernel_weights = torch.empty(kernel_size, kernel_size).cuda()
-        # for i in range(0, math.ceil(kernel_size / 2)):
-        #     kernel_weights[i, i:kernel_size-i] = weights[i]
-        #     kernel_weights[kernel_size - i - 1, i:kernel_size-i] = weights[i]
-        #     for j in range(i + 1, kernel_size - i):
-        #         kernel_weights[j, i] = weights[i]
-        #         kernel_weights[j, kernel_size-i-1] = weights[i]
+        kernel_weights = torch.empty(kernel_size, kernel_size).cuda()
+        for i in range(0, math.ceil(kernel_size / 2)):
+            kernel_weights[i, i:kernel_size-i] = weights[i]
+            kernel_weights[kernel_size - i - 1, i:kernel_size-i] = weights[i]
+            for j in range(i + 1, kernel_size - i):
+                kernel_weights[j, i] = weights[i]
+                kernel_weights[j, kernel_size-i-1] = weights[i]
         # kernel_weights = kernel_weights.repeat
-        kernel_weights = torch.full((kernel_size, kernel_size), 1.0).cuda()
+        # kernel_weights = torch.full((kernel_size, kernel_size), 1.0).cuda()
+        # print(kernel_weights)
+        # exit()
         return kernel_weights
 
     def forward(self, x):

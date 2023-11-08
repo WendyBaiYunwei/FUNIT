@@ -146,7 +146,8 @@ def get_train_loaders(conf):
             width=width,
             crop=True,
             num_workers=1,
-            n_cls=conf['train_way_size'])
+            n_cls=conf['train_way_size'],
+            return_paths=False)
 
     test_loader = get_dichomy_loader(
             episodes=conf['max_iter'],
@@ -275,9 +276,20 @@ def write_loss(iterations, trainer, train_writer):
         train_writer.add_scalar(m, getattr(trainer, m), iterations + 1)
 
 def sim(a, b):
-    normed_cos = (F.cosine_similarity(a, b, dim=1) + 1) / 2
+    normed_cos = (F.cosine_similarity(a, b, dim=1) + 1) / 2 + 1e-4
     # cosine_sim = torch.tanh((normed_cos - 0.6) * 2)
     return normed_cos
+
+
+def kl_divergence(p, q):
+    # Ensure that p and q are both probability distributions (i.e., they sum to 1)
+    p = torch.nn.functional.softmax(p, dim=1)
+    q = torch.nn.functional.softmax(q, dim=1)
+    
+    # Compute KL divergence
+    kl = torch.sum(p * (torch.log(p) - torch.log(q)))
+    
+    return kl
 
 class Timer:
     def __init__(self, msg):
@@ -297,25 +309,31 @@ class CategoriesSampler():
         self.n_per = n_per
 
         label = np.array(label)
-        self.m_ind = []
+        self.class2ind = []
         for i in range(max(label) + 1):
             ind = np.argwhere(label == i).reshape(-1)
             ind = torch.from_numpy(ind)
-            self.m_ind.append(ind)
-
+            self.class2ind.append(ind)
+        # print(self.class2ind)
+        # exit()
     def __len__(self):
-        return self.n_batch
+            return self.n_batch
 
     def __iter__(self):
         for i_batch in range(self.n_batch):
             batch = []
-            classes = torch.randperm(len(self.m_ind))[:self.n_cls]
+            classes = torch.randperm(len(self.class2ind))[:self.n_cls]
             for c in classes:
-                l = self.m_ind[c]
-                pos = torch.randperm(len(l))[:self.n_per]
-                batch.append(l[pos])
-            batch = torch.stack(batch).t().reshape(-1)
-            yield batch
+                class_labels = self.class2ind[c]
+                pos = torch.randperm(len(class_labels))[:self.n_per]
+                batch.append(class_labels[pos])
+            # try:
+            returned_batch = torch.stack(batch).t().reshape(-1)
+            yield returned_batch
+            # except:
+            #     print(classes, batch)
+            #     yield (classes, batch, '')
+                
 
 def reorganize_data(data):
     img = data[0]
